@@ -3,7 +3,9 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Threading;
+using System.Threading.Tasks;
 using MediaBrowser.Controller.Entities;
+using MediaBrowser.Controller.Entities.TV;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Controller.Net;
 using MediaBrowser.Controller.Persistence;
@@ -25,9 +27,11 @@ namespace MediaInfoKeeper.Web {
         private readonly IJsonSerializer _jsonSerializer;
         private readonly ILibraryManager _libraryManager;
         private readonly IHttpResultFactory _resultFactory;
+        private readonly RenameSubtitlesRouteHandler _renameSubtitlesHandler;
         private readonly ScanExternalFilesRouteHandler _scanExternalFilesHandler;
         private readonly ScanIntroRouteHandler _scanIntroHandler;
         private readonly SetIntroRouteHandler _setIntroHandler;
+        private readonly SubhdService _subhdService;
 
         public PluginWebResourceService(
             IHttpResultFactory resultFactory,
@@ -44,10 +48,12 @@ namespace MediaInfoKeeper.Web {
                     itemRepository);
             _scanIntroHandler = new ScanIntroRouteHandler(Plugin.LibraryService.ExpandItem);
             _scanExternalFilesHandler = new ScanExternalFilesRouteHandler(Plugin.LibraryService.ExpandItem);
+            _renameSubtitlesHandler = new RenameSubtitlesRouteHandler(Plugin.LibraryService.ExpandItem);
             _setIntroHandler =
                 new SetIntroRouteHandler(Plugin.LibraryService.ExpandItem, libraryManager, itemRepository);
             _clearIntroHandler =
                 new ClearIntroRouteHandler(Plugin.LibraryService.ExpandItem, libraryManager, itemRepository);
+            _subhdService = new SubhdService();
         }
 
         public IRequest Request { get; set; }
@@ -182,12 +188,483 @@ namespace MediaInfoKeeper.Web {
             return _scanExternalFilesHandler.Handle(request);
         }
 
+        public MediaInfoMenuResponse Post(RenameSubtitlesRequest request) {
+            return _renameSubtitlesHandler.Handle(request);
+        }
+
         public MediaInfoMenuResponse Post(SetIntroRequest request) {
             return _setIntroHandler.Handle(request);
         }
 
         public MediaInfoMenuResponse Post(ClearIntroRequest request) {
             return _clearIntroHandler.Handle(request);
+        }
+
+        public SearchSubhdResponse Post(SearchSubhdRequest request) {
+            var response = new SearchSubhdResponse { Subtitles = new List<SubhdSubtitleItem>() };
+
+            if (request?.Ids == null || request.Ids.Length == 0) {
+                response.Message = "未选择条目";
+                return response;
+            }
+
+            var itemId = request.Ids[0];
+            var item = _libraryManager.GetItemById(itemId);
+            if (item == null) {
+                if (long.TryParse(itemId, out var internalId)) {
+                    item = _libraryManager.GetItemById(internalId);
+                }
+            }
+
+            if (item == null) {
+                response.Message = "未找到媒体条目";
+                return response;
+            }
+
+            var searchQuery = BuildSearchQuery(item);
+            response.SearchQuery = searchQuery;
+            response.ItemName = BuildDisplayItemName(item);
+
+            if (string.IsNullOrWhiteSpace(searchQuery)) {
+                response.Message = "无法构建搜索关键词";
+                return response;
+            }
+
+            var localEpisodes = GetLocalEpisodes(item);
+            response.TotalEpisodes = localEpisodes.Count;
+
+            try {
+                var candidates = BuildSearchQueryCandidates(item, searchQuery);
+                var merged = new List<SubhdSubtitleItem>();
+                var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                var hitQuery = searchQuery;
+                var aggregateAllCandidates = item is Season || item is Series || item is Episode;
+
+                foreach (var query in candidates) {
+                    MergeSearchResults(_subhdService.SearchAsync(query).GetAwaiter().GetResult(), merged, seen);
+                    if (merged.Count > 0 && !aggregateAllCandidates) {
+                        hitQuery = query;
+                        break;
+                    }
+                }
+
+                FillMissingEpisodeSubtitles(GetSeriesName(item), localEpisodes, merged, seen);
+
+                if (aggregateAllCandidates && merged.Count > 0) {
+                    hitQuery = string.Join(" | ", candidates);
+                }
+
+                response.Subtitles = merged.OrderByDescending(s => s.Downloads).ToList();
+                response.SearchQuery = hitQuery;
+                if (response.Subtitles.Count > 0) {
+                    var covered = CountCoveredLocalEpisodes(merged, localEpisodes);
+                    response.Message = localEpisodes.Count > 0
+                        ? $"找到 {response.Subtitles.Count} 条字幕，覆盖库内 {covered}/{localEpisodes.Count} 集"
+                        : $"找到 {response.Subtitles.Count} 条字幕";
+                } else {
+                    response.Message = "未找到匹配的字幕";
+                }
+            } catch (Exception ex) {
+                Plugin.Instance.Logger.Error($"SubHD search error: {ex.Message}");
+                response.Message = $"搜索出错: {ex.Message}";
+            }
+
+            return response;
+        }
+
+        public MediaInfoMenuResponse Post(DownloadSubhdRequest request) {
+            var response = new MediaInfoMenuResponse { Total = 1, Processed = 1 };
+
+            if (string.IsNullOrWhiteSpace(request?.Id) || string.IsNullOrWhiteSpace(request?.SubId)) {
+                response.Message = "参数不完整";
+                response.Failed = 1;
+                return response;
+            }
+
+            var item = _libraryManager.GetItemById(request.Id);
+            if (item == null && long.TryParse(request.Id, out var internalId)) {
+                item = _libraryManager.GetItemById(internalId);
+            }
+
+            if (item == null) {
+                response.Message = "未找到媒体条目";
+                response.Failed = 1;
+                return response;
+            }
+
+            var targetItem = item;
+            if (request.SeasonNumber.HasValue && request.EpisodeNumber.HasValue) {
+                long seriesId = 0;
+                if (item is Episode epItem) seriesId = epItem.SeriesId;
+                else if (item is Season seasonItem) seriesId = seasonItem.SeriesId;
+                else if (item is Series seriesItem) seriesId = seriesItem.InternalId;
+
+                if (seriesId != 0) {
+                    var epQuery = new InternalItemsQuery {
+                        SeriesIds = new[] { seriesId },
+                        Recursive = true,
+                        IncludeItemTypes = new[] { nameof(Episode) }
+                    };
+                    var targetEp = _libraryManager.GetItemsResult(epQuery).Items
+                        .OfType<Episode>()
+                        .FirstOrDefault(e => e.ParentIndexNumber == request.SeasonNumber && e.IndexNumber == request.EpisodeNumber);
+                    if (targetEp != null) {
+                        targetItem = targetEp;
+                    }
+                }
+            }
+
+            var mediaDir = targetItem.ContainingFolderPath ?? Path.GetDirectoryName(targetItem.Path);
+            if (string.IsNullOrWhiteSpace(mediaDir)) {
+                response.Message = "无法确定媒体目录";
+                response.Failed = 1;
+                return response;
+            }
+
+            var baseFilename = !string.IsNullOrWhiteSpace(request.Filename)
+                ? request.Filename
+                : Path.GetFileNameWithoutExtension(targetItem.Path);
+
+            try {
+                var result = _subhdService.DownloadAsync(
+                        request.SubId,
+                        mediaDir,
+                        baseFilename,
+                        request.SeasonNumber,
+                        request.EpisodeNumber,
+                        saveBestOnly: true)
+                    .GetAwaiter().GetResult();
+                response.Succeeded = 1;
+                response.Message = result;
+            } catch (Exception ex) {
+                Plugin.Instance.Logger.Error($"SubHD download error: {ex.Message}");
+                response.Failed = 1;
+                response.Message = ex.Message;
+            }
+
+            return response;
+        }
+
+        public MediaInfoMenuResponse Post(DownloadSubhdBatchRequest request) {
+            var response = new MediaInfoMenuResponse();
+
+            if (string.IsNullOrWhiteSpace(request?.Id)) {
+                response.Message = "参数不完整";
+                response.Failed = 1;
+                return response;
+            }
+
+            var item = _libraryManager.GetItemById(request.Id);
+            if (item == null && long.TryParse(request.Id, out var internalId)) {
+                item = _libraryManager.GetItemById(internalId);
+            }
+
+            if (item == null) {
+                response.Message = "未找到媒体条目";
+                response.Failed = 1;
+                return response;
+            }
+
+            var localEpisodes = GetLocalEpisodes(item);
+            if (localEpisodes.Count == 0) {
+                response.Message = "库内没有可下载字幕的单集";
+                response.Failed = 1;
+                return response;
+            }
+
+            var hinted = new Dictionary<(int Season, int Episode), string>();
+            var hintCount = Math.Min(request.SubIds?.Length ?? 0, request.EpisodeNumbers?.Length ?? 0);
+            if (request.SeasonNumbers != null) {
+                hintCount = Math.Min(hintCount, request.SeasonNumbers.Length);
+            }
+            for (var i = 0; i < hintCount; i++) {
+                var epNum = request.EpisodeNumbers[i];
+                var seasonNum = request.SeasonNumbers != null && i < request.SeasonNumbers.Length
+                    ? request.SeasonNumbers[i]
+                    : 0;
+                var subId = request.SubIds[i];
+                if (epNum <= 0 || string.IsNullOrWhiteSpace(subId)) continue;
+                hinted[(seasonNum, epNum)] = subId;
+            }
+
+            var seriesName = GetSeriesName(item);
+            response.Total = localEpisodes.Count;
+            var ok = 0;
+            var fail = 0;
+            var errors = new List<string>();
+
+            foreach (var targetEp in localEpisodes) {
+                var epNum = targetEp.IndexNumber.Value;
+                var seasonNum = targetEp.ParentIndexNumber ?? 0;
+                if (!hinted.TryGetValue((seasonNum, epNum), out var subId) &&
+                    (seasonNum <= 0 || !hinted.TryGetValue((0, epNum), out subId))) {
+                    subId = SearchBestSubId(seriesName, seasonNum, epNum);
+                }
+
+                if (string.IsNullOrWhiteSpace(subId)) {
+                    fail++;
+                    errors.Add($"S{seasonNum:D2}E{epNum:D2}: 未找到字幕");
+                    continue;
+                }
+
+                var mediaDir = targetEp.ContainingFolderPath ?? Path.GetDirectoryName(targetEp.Path);
+                var baseFilename = Path.GetFileNameWithoutExtension(targetEp.Path);
+                try {
+                    _subhdService.DownloadAsync(
+                            subId,
+                            mediaDir,
+                            baseFilename,
+                            seasonNum > 0 ? seasonNum : null,
+                            epNum,
+                            saveBestOnly: true)
+                        .GetAwaiter().GetResult();
+                    ok++;
+                } catch (Exception ex) {
+                    fail++;
+                    errors.Add($"S{seasonNum:D2}E{epNum:D2}: {ex.Message}");
+                    Plugin.Instance.Logger.Error($"[SubHD批量] S{seasonNum:D2}E{epNum:D2} 失败: {ex.Message}");
+                }
+            }
+
+            response.Succeeded = ok;
+            response.Failed = fail;
+            response.Processed = ok + fail;
+            response.Message = $"批量下载完成：成功 {ok} / 失败 {fail}（按库内 {localEpisodes.Count} 集）";
+            if (errors.Count > 0) {
+                response.Message += " | " + string.Join("；", errors.Take(5));
+            }
+
+            return response;
+        }
+
+        private List<Episode> GetLocalEpisodes(BaseItem item) {
+            var seriesId = GetSeriesId(item);
+            if (seriesId == 0) return new List<Episode>();
+
+            var query = new InternalItemsQuery {
+                SeriesIds = new[] { seriesId },
+                Recursive = true,
+                IncludeItemTypes = new[] { nameof(Episode) }
+            };
+            var all = _libraryManager.GetItemsResult(query).Items.OfType<Episode>().ToList();
+
+            int? seasonFilter = null;
+            if (item is Season seasonItem && seasonItem.IndexNumber.GetValueOrDefault() > 0) {
+                seasonFilter = seasonItem.IndexNumber;
+            } else if (item is Episode episodeItem && episodeItem.ParentIndexNumber.GetValueOrDefault() > 0) {
+                seasonFilter = episodeItem.ParentIndexNumber;
+            }
+
+            return all
+                .Where(e => e.IndexNumber.GetValueOrDefault() > 0)
+                .Where(e => seasonFilter == null || (e.ParentIndexNumber ?? 0) == seasonFilter.Value)
+                .GroupBy(e => (Season: e.ParentIndexNumber ?? 0, Episode: e.IndexNumber.Value))
+                .Select(g => g.First())
+                .OrderBy(e => e.ParentIndexNumber ?? 0)
+                .ThenBy(e => e.IndexNumber.Value)
+                .ToList();
+        }
+
+        private static long GetSeriesId(BaseItem item) {
+            if (item is Episode ep) return ep.SeriesId;
+            if (item is Season season) return season.SeriesId;
+            if (item is Series series) return series.InternalId;
+            return 0;
+        }
+
+        private static string GetSeriesName(BaseItem item) {
+            if (item is Episode ep) return (ep.SeriesName ?? "").Trim();
+            if (item is Season season) return (season.SeriesName ?? "").Trim();
+            if (item is Series series) return (series.Name ?? "").Trim();
+            return (item?.Name ?? "").Trim();
+        }
+
+        private static void MergeSearchResults(
+            IEnumerable<SubhdSubtitleItem> results,
+            List<SubhdSubtitleItem> merged,
+            HashSet<string> seen) {
+            if (results == null) return;
+            foreach (var subtitle in results) {
+                if (subtitle == null || string.IsNullOrWhiteSpace(subtitle.SubId)) continue;
+                if (seen.Add(subtitle.SubId)) merged.Add(subtitle);
+            }
+        }
+
+        private void FillMissingEpisodeSubtitles(
+            string seriesName,
+            List<Episode> localEpisodes,
+            List<SubhdSubtitleItem> merged,
+            HashSet<string> seen) {
+            if (string.IsNullOrWhiteSpace(seriesName) || localEpisodes == null || localEpisodes.Count == 0) return;
+
+            var covered = new HashSet<(int Season, int Episode)>();
+            foreach (var subtitle in merged) {
+                var parsed = SubhdService.TryParseSeasonEpisode(subtitle?.Title);
+                if (parsed.HasValue) covered.Add(parsed.Value);
+            }
+
+            foreach (var episode in localEpisodes) {
+                var key = (Season: episode.ParentIndexNumber ?? 1, Episode: episode.IndexNumber.Value);
+                if (covered.Contains(key)) continue;
+
+                var best = SearchBestSubtitle(seriesName, key.Season, key.Episode);
+                if (best == null || string.IsNullOrWhiteSpace(best.SubId)) continue;
+                if (seen.Add(best.SubId)) merged.Add(best);
+                covered.Add(key);
+            }
+        }
+
+        private string SearchBestSubId(string seriesName, int seasonNumber, int episodeNumber) {
+            return SearchBestSubtitle(seriesName, seasonNumber, episodeNumber)?.SubId;
+        }
+
+        private SubhdSubtitleItem SearchBestSubtitle(string seriesName, int seasonNumber, int episodeNumber) {
+            if (string.IsNullOrWhiteSpace(seriesName) || episodeNumber <= 0) return null;
+
+            var season = seasonNumber > 0 ? seasonNumber : 1;
+            var queries = new[] {
+                $"{seriesName} S{season:D2}E{episodeNumber:D2}",
+                $"{seriesName} S{season:D2}"
+            };
+
+            foreach (var query in queries) {
+                List<SubhdSubtitleItem> results;
+                try {
+                    results = _subhdService.SearchAsync(query).GetAwaiter().GetResult();
+                } catch (Exception ex) {
+                    Plugin.Instance.Logger.Error($"SubHD fallback search failed query={query}: {ex.Message}");
+                    continue;
+                }
+
+                var best = PickBestSubtitleForEpisode(results, season, episodeNumber);
+                if (best != null) return best;
+
+                if (query.IndexOf($"E{episodeNumber:D2}", StringComparison.OrdinalIgnoreCase) >= 0) {
+                    best = results?
+                        .Where(s => s != null && !string.IsNullOrWhiteSpace(s.SubId))
+                        .OrderByDescending(s => s.Downloads)
+                        .FirstOrDefault();
+                    if (best != null) return best;
+                }
+            }
+
+            return null;
+        }
+
+        private static SubhdSubtitleItem PickBestSubtitleForEpisode(
+            IEnumerable<SubhdSubtitleItem> results,
+            int seasonNumber,
+            int episodeNumber) {
+            if (results == null) return null;
+
+            return results
+                .Where(s => s != null && !string.IsNullOrWhiteSpace(s.SubId))
+                .Select(s => (Item: s, Parsed: SubhdService.TryParseSeasonEpisode(s.Title)))
+                .Where(x => x.Parsed.HasValue &&
+                            x.Parsed.Value.episode == episodeNumber &&
+                            (seasonNumber <= 0 || x.Parsed.Value.season == seasonNumber))
+                .OrderByDescending(x => x.Item.Downloads)
+                .Select(x => x.Item)
+                .FirstOrDefault();
+        }
+
+        private static int CountCoveredLocalEpisodes(List<SubhdSubtitleItem> subtitles, List<Episode> localEpisodes) {
+            if (subtitles == null || localEpisodes == null || localEpisodes.Count == 0) return 0;
+
+            var covered = new HashSet<(int Season, int Episode)>();
+            foreach (var subtitle in subtitles) {
+                var parsed = SubhdService.TryParseSeasonEpisode(subtitle?.Title);
+                if (parsed.HasValue) covered.Add(parsed.Value);
+            }
+
+            return localEpisodes.Count(e => covered.Contains((e.ParentIndexNumber ?? 0, e.IndexNumber.Value)) ||
+                                            covered.Contains((e.ParentIndexNumber ?? 1, e.IndexNumber.Value)));
+        }
+
+        private static string BuildSearchQuery(BaseItem item) {
+            var name = item.Name?.Trim();
+            if (string.IsNullOrWhiteSpace(name)) return "";
+
+            var year = item.ProductionYear > 0 ? item.ProductionYear.ToString() : "";
+
+            if (item is Episode ep) {
+                var seriesName = ep.SeriesName ?? "";
+                var season = ep.ParentIndexNumber > 0 ? $"S{ep.ParentIndexNumber:D2}" : "";
+                if (!string.IsNullOrWhiteSpace(seriesName)) {
+                    return $"{seriesName} {season}".Trim();
+                }
+            }
+
+            if (item is Season seasonItem) {
+                var seriesName = seasonItem.SeriesName ?? "";
+                var seasonNum = seasonItem.IndexNumber > 0 ? $"S{seasonItem.IndexNumber:D2}" : "";
+                if (!string.IsNullOrWhiteSpace(seriesName)) {
+                    return $"{seriesName} {seasonNum}".Trim();
+                }
+            }
+
+            if (item is Series) {
+                return name;
+            }
+
+            return $"{name} {year}".Trim();
+        }
+
+        private static List<string> BuildSearchQueryCandidates(BaseItem item, string primaryQuery) {
+            var candidates = new List<string>();
+            void Add(string q) {
+                if (string.IsNullOrWhiteSpace(q)) return;
+                if (!candidates.Contains(q, StringComparer.OrdinalIgnoreCase)) candidates.Add(q);
+            }
+
+            Add(primaryQuery);
+            var itemName = item?.Name?.Trim() ?? "";
+
+            if (item is Episode ep) {
+                var series = (ep.SeriesName ?? "").Trim();
+                var seasonNumber = ep.ParentIndexNumber > 0 ? ep.ParentIndexNumber : 1;
+                if (!string.IsNullOrWhiteSpace(series)) {
+                    Add($"{series} S{seasonNumber:D2}");
+                    Add(series);
+                }
+            } else if (item is Season season) {
+                var series = (season.SeriesName ?? "").Trim();
+                var seasonNumber = season.IndexNumber > 0 ? season.IndexNumber : 1;
+                if (!string.IsNullOrWhiteSpace(series)) {
+                    Add($"{series} S{seasonNumber:D2}");
+                    Add(series);
+                }
+            } else if (item is Series seriesItem) {
+                Add(seriesItem.Name?.Trim());
+            } else {
+                Add(itemName);
+            }
+
+            return candidates;
+        }
+
+        private static string BuildDisplayItemName(BaseItem item) {
+            if (item is Episode ep) {
+                var seriesName = (ep.SeriesName ?? "").Trim();
+                var episodeName = (ep.Name ?? "").Trim();
+                var season = ep.ParentIndexNumber.HasValue && ep.ParentIndexNumber.Value > 0
+                    ? ep.ParentIndexNumber.Value.ToString("D2")
+                    : "01";
+                var episode = ep.IndexNumber.HasValue ? ep.IndexNumber.Value.ToString("D2") : "--";
+                return string.IsNullOrWhiteSpace(seriesName)
+                    ? $"{episodeName} S{season}E{episode}".Trim()
+                    : $"{seriesName} S{season}E{episode} {episodeName}".Trim();
+            }
+
+            if (item is Season seasonItem) {
+                var seriesName = (seasonItem.SeriesName ?? "").Trim();
+                var season = seasonItem.IndexNumber.HasValue && seasonItem.IndexNumber.Value > 0
+                    ? seasonItem.IndexNumber.Value.ToString("D2")
+                    : "01";
+                return string.IsNullOrWhiteSpace(seriesName) ? $"Season {season}" : $"{seriesName} S{season}";
+            }
+
+            return item?.Name ?? "";
         }
 
         public DebugMediaInfoResponse Get(DebugMediaInfoRequest request) {

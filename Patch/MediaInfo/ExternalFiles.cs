@@ -210,7 +210,18 @@ namespace MediaInfoKeeper.Patch {
                       (stream.Type == MediaStreamType.Subtitle || stream.Type == MediaStreamType.Audio)));
             var nextIndex = currentStreams.Count == 0 ? 0 : currentStreams.Max(stream => stream.Index) + 1;
             var externalSubtitleStreams = GetExternalSubtitleStreams(item, nextIndex, directoryService, clearCache);
-            nextIndex += externalSubtitleStreams.Count;
+
+            var discoveredPaths = new HashSet<string>(
+                externalSubtitleStreams.Select(s => Path.GetFileName(s.Path)),
+                StringComparer.OrdinalIgnoreCase);
+            var fallbackStreams = DiscoverMissingSubtitleFiles(item, nextIndex + externalSubtitleStreams.Count, discoveredPaths);
+            if (fallbackStreams.Count > 0) {
+                logger?.Info($"兜底发现 {fallbackStreams.Count} 个字幕文件: {string.Join(", ", fallbackStreams.Select(s => Path.GetFileName(s.Path)))}");
+                externalSubtitleStreams.AddRange(fallbackStreams);
+            }
+
+            nextIndex = (currentStreams.Count == 0 ? 0 : currentStreams.Max(stream => stream.Index) + 1)
+                        + externalSubtitleStreams.Count;
             var externalAudioStreams = GetExternalAudioStreams(item, nextIndex, directoryService, clearCache);
 
             await UpdateStreams(item, externalSubtitleStreams, refreshOptions, cancellationToken, "字幕")
@@ -342,6 +353,61 @@ namespace MediaInfoKeeper.Patch {
                     libraryOptions,
                     cancellationToken
                 });
+        }
+
+        private static readonly HashSet<string> SubtitleExtensions = new(StringComparer.OrdinalIgnoreCase) {
+            ".ass", ".ssa", ".srt", ".sup", ".vtt", ".sub", ".smi", ".pgs", ".idx", ".ttml", ".dfxp", ".xml"
+        };
+
+        private static string GetCodecFromExtension(string extension) {
+            if (string.IsNullOrWhiteSpace(extension)) return "sub";
+            var ext = extension.TrimStart('.').ToLowerInvariant();
+            // .sup → pgs (PGS/SUP 格式)
+            if (ext == "sup") return "pgs";
+            // .sub → subrip (也可能 idx/sub 组合中的 sub，但单独 .sub 常见 subrip)
+            if (ext == "sub") return "subrip";
+            if (ext == "ttml" || ext == "dfxp") return "ttml";
+            return ext;
+        }
+
+        private List<MediaStream> DiscoverMissingSubtitleFiles(
+            BaseItem item,
+            int startIndex,
+            HashSet<string> alreadyDiscovered) {
+            var result = new List<MediaStream>();
+            if (item == null || string.IsNullOrWhiteSpace(item.ContainingFolderPath)) return result;
+
+            try {
+                var videoName = Path.GetFileNameWithoutExtension(item.Path);
+                if (string.IsNullOrWhiteSpace(videoName)) return result;
+
+                var files = Directory.GetFiles(item.ContainingFolderPath);
+                foreach (var file in files) {
+                    var fileName = Path.GetFileName(file);
+                    if (alreadyDiscovered.Contains(fileName)) continue;
+
+                    var ext = Path.GetExtension(file);
+                    if (!SubtitleExtensions.Contains(ext)) continue;
+
+                    // 字幕文件名必须以视频名为前缀（Emby 命名约定）
+                    if (!fileName.StartsWith(videoName, StringComparison.OrdinalIgnoreCase)) continue;
+
+                    var codec = GetCodecFromExtension(ext);
+                    result.Add(new MediaStream {
+                        Type = MediaStreamType.Subtitle,
+                        Index = startIndex++,
+                        Path = file,
+                        Codec = codec,
+                        IsExternal = true,
+                        Protocol = MediaProtocol.File
+                    });
+                }
+            }
+            catch (Exception ex) {
+                logger?.Warn($"兜底扫描字幕文件失败: {ex.Message}");
+            }
+
+            return result;
         }
 
         private static string NormalizePath(string path) {

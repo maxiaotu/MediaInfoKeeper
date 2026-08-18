@@ -1,0 +1,14 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Weavers xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="FodyWeavers.xsd">
+  <Costura IncludeDebugSymbols="false">
+    <IncludeAssemblies>
+      0Harmony
+      TinyPinyin
+      DiscUtils.Core
+      DiscUtils.Iso9660
+      DiscUtils.Streams
+      DiscUtils.Udf
+      SharpCompress
+    </IncludeAssemblies>
+  </Costura>
+</Weavers>

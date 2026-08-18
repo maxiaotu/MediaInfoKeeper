@@ -25,6 +25,7 @@ x86/
 *.cachefile
 
 # 其他
+.DS_Store
 .vs/
 .vscode/
 .idea/

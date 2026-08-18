@@ -127,6 +127,20 @@ define(['connectionManager', 'globalize', 'loading', 'toast', 'confirm'], functi
             : (['zh-hk', 'zh-tw'].includes(locale) ? '複製媒體庫' : 'Duplicate Library');
     }
 
+    function getSubhdSearchCommandName() {
+        const locale = (globalize.getCurrentLocale() || '').toLowerCase();
+        return locale === 'zh-cn'
+            ? '搜索外挂字幕'
+            : (['zh-hk', 'zh-tw'].includes(locale) ? '搜索外挂字幕' : 'Search SubHD Subtitles');
+    }
+
+    function getRenameSubtitlesCommandName() {
+        const locale = (globalize.getCurrentLocale() || '').toLowerCase();
+        return locale === 'zh-cn'
+            ? '字幕外挂命名'
+            : (['zh-hk', 'zh-tw'].includes(locale) ? '字幕外挂命名' : 'Rename Subtitles');
+    }
+
     function getResultMessage(result, action) {
         const normalized = normalizeResult(result);
         const isDelete = action === 'delete';
@@ -134,28 +148,29 @@ define(['connectionManager', 'globalize', 'loading', 'toast', 'confirm'], functi
         const isScanExternalFiles = action === 'scan_external_files';
         const isSetIntro = action === 'set_intro';
         const isClearIntro = action === 'clear_intro';
+        const isRename = action === 'rename_subtitles';
         if (!result) {
-            return (isDelete ? getDeleteCommandName() : (isScanIntro ? getScanIntroCommandName() : (isScanExternalFiles ? getScanExternalFilesCommandName() : (isSetIntro ? getSetIntroCommandName() : (isClearIntro ? getClearIntroCommandName() : getCommandName()))))) + ' finished';
+            return (isDelete ? getDeleteCommandName() : (isScanIntro ? getScanIntroCommandName() : (isScanExternalFiles ? getScanExternalFilesCommandName() : (isSetIntro ? getSetIntroCommandName() : (isClearIntro ? getClearIntroCommandName() : (isRename ? getRenameSubtitlesCommandName() : getCommandName())))))) + ' finished';
         }
 
         const locale = (globalize.getCurrentLocale() || '').toLowerCase();
         if (!normalized.hasStats) {
             if (locale === 'zh-cn') {
-                return (isDelete ? '删除完成' : (isScanIntro ? '扫描完成' : (isScanExternalFiles ? '扫描完成' : (isSetIntro ? '设置完成' : (isClearIntro ? '清除完成' : '提取完成'))))) + '（返回体无统计字段，请看日志）';
+                return (isDelete ? '删除完成' : (isScanIntro ? '扫描完成' : (isScanExternalFiles ? '扫描完成' : (isSetIntro ? '设置完成' : (isClearIntro ? '清除完成' : (isRename ? '命名完成' : '提取完成')))))) + '（返回体无统计字段，请看日志）';
             }
             if (['zh-hk', 'zh-tw'].includes(locale)) {
-                return (isDelete ? '刪除完成' : (isScanIntro ? '掃描完成' : (isScanExternalFiles ? '掃描完成' : (isSetIntro ? '設置完成' : (isClearIntro ? '清除完成' : '提取完成'))))) + '（返回體無統計字段，請看日誌）';
+                return (isDelete ? '刪除完成' : (isScanIntro ? '掃描完成' : (isScanExternalFiles ? '掃描完成' : (isSetIntro ? '設置完成' : (isClearIntro ? '清除完成' : (isRename ? '命名完成' : '提取完成')))))) + '（返回體無統計字段，請看日誌）';
             }
             return 'Completed (no stats in response, check server logs)';
         }
 
         if (locale === 'zh-cn') {
-            const prefix = isDelete ? '删除完成' : (isScanIntro ? '扫描完成' : (isScanExternalFiles ? '扫描完成' : (isSetIntro ? '设置完成' : (isClearIntro ? '清除完成' : '提取完成'))));
+            const prefix = isDelete ? '删除完成' : (isScanIntro ? '扫描完成' : (isScanExternalFiles ? '扫描完成' : (isSetIntro ? '设置完成' : (isClearIntro ? '清除完成' : (isRename ? '命名完成' : '提取完成')))));
             return prefix + `：成功 ${normalized.succeeded}，失败 ${normalized.failed}，跳过 ${normalized.skipped}`;
         }
 
         if (['zh-hk', 'zh-tw'].includes(locale)) {
-            const prefix = isDelete ? '刪除完成' : (isScanIntro ? '掃描完成' : (isScanExternalFiles ? '掃描完成' : (isSetIntro ? '設置完成' : (isClearIntro ? '清除完成' : '提取完成'))));
+            const prefix = isDelete ? '刪除完成' : (isScanIntro ? '掃描完成' : (isScanExternalFiles ? '掃描完成' : (isSetIntro ? '設置完成' : (isClearIntro ? '清除完成' : (isRename ? '命名完成' : '提取完成')))));
             return prefix + `：成功 ${normalized.succeeded}，失敗 ${normalized.failed}，跳過 ${normalized.skipped}`;
         }
 
@@ -272,7 +287,8 @@ define(['connectionManager', 'globalize', 'loading', 'toast', 'confirm'], functi
         const isSetIntro = action === 'set_intro';
         const isClearIntro = action === 'clear_intro';
         const isCopyLibrary = action === 'copy_library';
-        const commandName = isDelete ? getDeleteCommandName() : (isScanIntro ? getScanIntroCommandName() : (isScanExternalFiles ? getScanExternalFilesCommandName() : (isSetIntro ? getSetIntroCommandName() : (isClearIntro ? getClearIntroCommandName() : (isCopyLibrary ? getCopyLibraryCommandName() : getCommandName())))));
+        const isRename = action === 'rename_subtitles';
+        const commandName = isDelete ? getDeleteCommandName() : (isScanIntro ? getScanIntroCommandName() : (isScanExternalFiles ? getScanExternalFilesCommandName() : (isSetIntro ? getSetIntroCommandName() : (isClearIntro ? getClearIntroCommandName() : (isCopyLibrary ? getCopyLibraryCommandName() : (isRename ? getRenameSubtitlesCommandName() : getCommandName()))))));
         const detail = (err && (err.message || err.statusText || err.responseText)) ? ` (${err.message || err.statusText || err.responseText})` : '';
         return commandName + ' failed' + detail;
     }
@@ -619,6 +635,30 @@ define(['connectionManager', 'globalize', 'loading', 'toast', 'confirm'], functi
             });
         },
 
+        renameSubtitles: function (ids) {
+            if (!ids || !ids.length) {
+                return Promise.resolve();
+            }
+
+            const commandName = getRenameSubtitlesCommandName();
+            return confirm({
+                text: globalize.translate('AreYouSureToContinue'),
+                title: commandName,
+                confirmText: commandName,
+                primary: 'cancel'
+            }).then(function () {
+                loading.show();
+                const apiClient = connectionManager.currentApiClient();
+                return postJson(apiClient, 'MediaInfoKeeper/Items/RenameSubtitles', {Ids: ids}).then(function (result) {
+                    toast(getResultMessage(result, 'rename_subtitles'));
+                }).catch(function (err) {
+                    toast(getErrorMessage('rename_subtitles', err));
+                }).finally(function () {
+                    loading.hide();
+                });
+            });
+        },
+
         setIntro: function (ids, items) {
             if (!ids || !ids.length) {
                 return Promise.resolve();
@@ -842,6 +882,279 @@ define(['connectionManager', 'globalize', 'loading', 'toast', 'confirm'], functi
         }
     };
 
+    // ========== SubHD 字幕搜索 ==========
+    function searchSubhd(item) {
+        var itemId = item.Id || item.Guid || item.ItemId || '';
+
+        loading.show();
+
+        var apiClient = connectionManager.currentApiClient();
+        if (!apiClient) {
+            loading.hide();
+            toast('无法获取API连接');
+            return;
+        }
+
+        var url = apiClient.getUrl('MediaInfoKeeper/Items/SearchSubhd');
+        apiClient.ajax({
+            type: 'POST',
+            url: url,
+            data: JSON.stringify({ Ids: [itemId] }),
+            contentType: 'application/json',
+            dataType: 'json'
+        }).then(function (result) {
+            loading.hide();
+            if (!result || !result.Subtitles) {
+                toast(result && result.Message ? result.Message : '搜索无结果');
+                return;
+            }
+            showSubhdDialog(item, result);
+        }).catch(function (err) {
+            loading.hide();
+            toast('字幕搜索失败: ' + ((err && err.message) || (err && err.statusText) || '网络错误'));
+        });
+    }
+
+    function showSubhdDialog(item, searchResult) {
+        var subtitles = searchResult.Subtitles || [];
+        var itemName = searchResult.ItemName || item.Name || '';
+        var targetSeason = Number(item && item.ParentIndexNumber);
+        var targetEpisode = Number(item && item.IndexNumber);
+
+        // 解析季号+集号，检测是否为剧集（用于一键批量下载整季）
+        var episodeBest = {};
+        var episodeMeta = {};
+        function parseSeasonEpisodeFromTitle(title) {
+            var t = title || '';
+            var m = /S(\d{1,2})\s*E(\d{1,2})/i.exec(t);
+            if (m) {
+                return { season: parseInt(m[1], 10), ep: parseInt(m[2], 10) };
+            }
+            m = /(\d{1,2})x(\d{1,2})/i.exec(t);
+            if (m) {
+                return { season: parseInt(m[1], 10), ep: parseInt(m[2], 10) };
+            }
+            return null;
+        }
+        subtitles.forEach(function (s) {
+            var parsed = parseSeasonEpisodeFromTitle(s.Title || '');
+            if (parsed) {
+                var seasonNum = parsed.season;
+                var epNum = parsed.ep;
+                var key = seasonNum + '-' + epNum;
+                var cur = episodeBest[key];
+                if (!cur || (s.Downloads || 0) > (cur.Downloads || 0)) {
+                    episodeBest[key] = s;
+                    episodeMeta[key] = { season: seasonNum, ep: epNum };
+                }
+            }
+        });
+        var epKeys = Object.keys(episodeBest).sort(function (a, b) {
+            var sa = parseInt(a.split('-')[0], 10), ea = parseInt(a.split('-')[1], 10);
+            var sb = parseInt(b.split('-')[0], 10), eb = parseInt(b.split('-')[1], 10);
+            return (sa - sb) || (ea - eb);
+        });
+        var localEpisodeCount = Number(searchResult.TotalEpisodes) || 0;
+        var isSeries = epKeys.length >= 1 || localEpisodeCount >= 1;
+        var selectedCount = localEpisodeCount > 0 ? localEpisodeCount : epKeys.length;
+        var isEpisodeItem = item && item.Type === 'Episode' && Number.isFinite(targetEpisode) && targetEpisode > 0;
+
+        function getDownloadCount(subtitleItem) {
+            var raw = subtitleItem && subtitleItem.Downloads;
+            var n = Number(raw);
+            return Number.isFinite(n) ? n : 0;
+        }
+
+        function compareByDownloadsDesc(a, b) {
+            return getDownloadCount(b) - getDownloadCount(a);
+        }
+
+        var displaySubtitles = subtitles.slice();
+        if (isEpisodeItem) {
+            var exactEpisode = [];
+            var others = [];
+            displaySubtitles.forEach(function (s) {
+                var parsed = parseSeasonEpisodeFromTitle((s && s.Title) || '');
+                var seasonMatched = !Number.isFinite(targetSeason) || targetSeason <= 0 || (parsed && parsed.season === targetSeason);
+                var isExact = !!(parsed && parsed.ep === targetEpisode && seasonMatched);
+                if (isExact) {
+                    exactEpisode.push(s);
+                } else {
+                    others.push(s);
+                }
+            });
+            exactEpisode.sort(compareByDownloadsDesc);
+            others.sort(compareByDownloadsDesc);
+            displaySubtitles = exactEpisode.concat(others);
+        }
+
+        var html = '<div class="formDialogHeader">' +
+            '<button type="button" is="emby-dialogclosebutton" closetype="cancel"></button>' +
+            '<h3 class="formDialogHeaderTitle">字幕搜索</h3>' +
+            '</div>' +
+            '<div class="formDialogContent"><div class="dialogContentInner padded-left padded-right">' +
+            '<p class="secondaryText">' + escapeHtml(itemName) + '</p>' +
+            '<p class="secondaryText" style="font-size:12px">搜索词: ' + escapeHtml(searchResult.SearchQuery || '') + '</p>';
+
+        var labelCount = selectedCount;
+        if (isSeries) {
+            html += '<div style="padding: 8px 0 12px 0;">' +
+                '<button type="button" id="subhdBatchBtn" class="emby-button raised" ' +
+                'style="width:100%;white-space:normal;line-height:1.25;padding:10px 12px">' +
+                '一键下载整季<br />（按库内 ' + labelCount + ' 集，自动选最高下载量）</button>' +
+                '</div>';
+        }
+
+        if (!subtitles.length) {
+            html += '<p style="padding:2em 0;text-align:center">' + (searchResult.Message || '未找到字幕') + '</p>';
+        } else {
+            html += '<div style="max-height:50vh;overflow-y:auto;padding-right:6px">';
+            for (var i = 0; i < displaySubtitles.length; i++) {
+                var s = displaySubtitles[i];
+                var tags = (s.Tags || []).join(' · ');
+                var movieInfo = s.MovieName ? s.MovieName : '';
+                if (s.MovieYear) movieInfo += ' (' + s.MovieYear + ')';
+                html += '<div class="subhd-item" style="padding:10px 0;border-bottom:1px solid #333;cursor:pointer"' +
+                    ' data-subid="' + escapeHtml(s.SubId) + '"' +
+                    ' data-title="' + escapeHtml(s.Title || '') + '">' +
+                    '<div style="font-weight:bold;margin-bottom:3px">' + (s.Title || s.SubId) + '</div>' +
+                    '<div style="font-size:12px;color:#999">';
+                if (movieInfo) html += escapeHtml(movieInfo) + ' · ';
+                if (s.Group) html += '<span style="color:#28a745">' + escapeHtml(s.Group) + '</span> · ';
+                if (tags) html += escapeHtml(tags);
+                html += '</div>' +
+                    '<div style="font-size:12px;color:#666;margin-top:2px">';
+                if (s.Format) html += escapeHtml(s.Format) + ' · ';
+                if (s.Size) html += escapeHtml(s.Size) + ' · ';
+                if (s.Uploader) html += escapeHtml(s.Uploader) + ' · ';
+                if (s.Downloads) html += '⬇' + s.Downloads;
+                html += '</div></div>';
+            }
+            html += '</div>';
+        }
+
+        html += '</div></div>';
+
+        Emby.importModule('./modules/dialoghelper/dialoghelper.js').then(function (mod) {
+            var dialogHelper = mod && mod.default ? mod.default : mod;
+            var dlg = dialogHelper.createDialog({ size: 'medium-tall', removeOnClose: true });
+            dlg.classList.add('formDialog');
+            dlg.innerHTML = html;
+
+            var batchBtn = dlg.querySelector('#subhdBatchBtn');
+            if (batchBtn) {
+                batchBtn.addEventListener('click', function () {
+                    downloadSubhdBatch(item, epKeys, episodeBest, episodeMeta, dlg);
+                });
+            }
+
+            var items = dlg.querySelectorAll('.subhd-item');
+            items.forEach(function (el) {
+                el.addEventListener('click', function () {
+                    var subId = el.getAttribute('data-subid');
+                    var title = el.getAttribute('data-title');
+                    downloadSubhd(item, subId, title, dlg);
+                });
+            });
+
+            dialogHelper.open(dlg);
+        });
+    }
+
+    function downloadSubhd(item, subId, subTitle, dialog) {
+        var itemId = item.Id || item.Guid || item.ItemId || '';
+        var apiClient = connectionManager.currentApiClient();
+
+        loading.show();
+        if (dialog) {
+            Emby.importModule('./modules/dialoghelper/dialoghelper.js').then(function (mod) {
+                var dh = mod && mod.default ? mod.default : mod;
+                dh.close(dialog);
+            });
+        }
+
+        var seasonNumber = null;
+        var episodeNumber = null;
+        var mEp = /S(\d{1,2})\s*E(\d{1,2})/i.exec(subTitle || '');
+        if (mEp) {
+            seasonNumber = parseInt(mEp[1], 10);
+            episodeNumber = parseInt(mEp[2], 10);
+        } else {
+            mEp = /(\d{1,2})x(\d{1,2})/i.exec(subTitle || '');
+            if (mEp) {
+                seasonNumber = parseInt(mEp[1], 10);
+                episodeNumber = parseInt(mEp[2], 10);
+            }
+        }
+
+        apiClient.ajax({
+            type: 'POST',
+            url: apiClient.getUrl('MediaInfoKeeper/Items/DownloadSubhd'),
+            data: JSON.stringify({
+                Id: itemId,
+                SubId: subId,
+                Filename: '',
+                SeasonNumber: seasonNumber,
+                EpisodeNumber: episodeNumber
+            }),
+            contentType: 'application/json',
+            dataType: 'json'
+        }).then(function (result) {
+            loading.hide();
+            if (result && result.Succeeded) {
+                toast('字幕下载完成: ' + (result.Message || ''));
+            } else {
+                toast('下载失败: ' + (result && result.Message ? result.Message : '未知错误'));
+            }
+        }).catch(function (err) {
+            loading.hide();
+            toast('下载失败: ' + ((err && err.message) || (err && err.statusText) || '网络错误'));
+        });
+    }
+
+    function downloadSubhdBatch(item, epKeys, episodeBest, episodeMeta, dialog) {
+        var itemId = item.Id || item.Guid || item.ItemId || '';
+        var subIds = epKeys.map(function (k) { return episodeBest[k].SubId; });
+        var seasonNumbers = epKeys.map(function (k) { return episodeMeta[k].season; });
+        var episodeNumbers = epKeys.map(function (k) { return episodeMeta[k].ep; });
+        var apiClient = connectionManager.currentApiClient();
+
+        loading.show();
+        if (dialog) {
+            Emby.importModule('./modules/dialoghelper/dialoghelper.js').then(function (mod) {
+                var dh = mod && mod.default ? mod.default : mod;
+                dh.close(dialog);
+            });
+        }
+
+        apiClient.ajax({
+            type: 'POST',
+            url: apiClient.getUrl('MediaInfoKeeper/Items/DownloadSubhdBatch'),
+            data: JSON.stringify({
+                Id: itemId,
+                SubIds: subIds,
+                SeasonNumbers: seasonNumbers,
+                EpisodeNumbers: episodeNumbers
+            }),
+            contentType: 'application/json',
+            dataType: 'json'
+        }).then(function (result) {
+            loading.hide();
+            toast(result && result.Message ? result.Message : '批量下载完成');
+        }).catch(function (err) {
+            loading.hide();
+            toast('批量下载失败: ' + ((err && err.message) || (err && err.statusText) || '网络错误'));
+        });
+    }
+
+    function escapeHtml(text) {
+        if (!text) return '';
+        var div = document.createElement('div');
+        div.appendChild(document.createTextNode(text));
+        return div.innerHTML;
+    }
+    // ========== SubHD 字幕搜索结束 ==========
+
     function buildCommandSource() {
         return {
             getCommands: function (options) {
@@ -892,6 +1205,20 @@ define(['connectionManager', 'globalize', 'loading', 'toast', 'confirm'], functi
                         id: 'scan_external_files',
                         icon: 'subtitles'
                     });
+                    commands.push({
+                        name: getRenameSubtitlesCommandName(),
+                        id: 'rename_subtitles',
+                        icon: 'drive_file_rename_outline'
+                    });
+                }
+
+                const subhdSupportedTypes = {Movie: true, Episode: true, Season: true, Series: true, Video: true};
+                if (items.length === 1 && subhdSupportedTypes[items[0].Type]) {
+                    commands.push({
+                        name: getSubhdSearchCommandName(),
+                        id: 'search_subhd',
+                        icon: 'search'
+                    });
                 }
 
                 return commands;
@@ -926,6 +1253,10 @@ define(['connectionManager', 'globalize', 'loading', 'toast', 'confirm'], functi
                     return api.scanExternalFiles(ids);
                 }
 
+                if (command === 'rename_subtitles') {
+                    return api.renameSubtitles(ids);
+                }
+
                 if (command === 'set_intro') {
                     return api.setIntro(ids, items);
                 }
@@ -933,12 +1264,16 @@ define(['connectionManager', 'globalize', 'loading', 'toast', 'confirm'], functi
                 if (command === 'clear_intro') {
                     return api.clearIntro(ids);
                 }
+
+                if (command === 'search_subhd') {
+                    return searchSubhd(items[0]);
+                }
             }
         };
     }
 
     (function registerCommandSource(attempt) {
-        const maxAttempts = 20;
+        const maxAttempts = 120;
         Emby.importModule('./modules/common/itemmanager/itemmanager.js')
             .then(itemmanager => {
                 if (!itemmanager || typeof itemmanager.registerCommandSource !== 'function') {
@@ -954,7 +1289,7 @@ define(['connectionManager', 'globalize', 'loading', 'toast', 'confirm'], functi
             })
             .catch(() => {
                 if (attempt < maxAttempts) {
-                    setTimeout(() => registerCommandSource(attempt + 1), 150);
+                    setTimeout(() => registerCommandSource(attempt + 1), 250);
                 }
             });
     })(0);

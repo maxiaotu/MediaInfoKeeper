@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using MediaBrowser.Controller.Net;
 using MediaBrowser.Model.Services;
 
@@ -70,6 +71,12 @@ namespace MediaInfoKeeper.Web {
     [Route("/MediaInfoKeeper/Items/ClearIntro", "POST")]
     [Authenticated(Roles = "Admin")]
     public class ClearIntroRequest : IReturn<MediaInfoMenuResponse> {
+        public string[] Ids { get; set; }
+    }
+
+    [Route("/MediaInfoKeeper/Items/RenameSubtitles", "POST")]
+    [Authenticated(Roles = "Admin")]
+    public class RenameSubtitlesRequest : IReturn<MediaInfoMenuResponse> {
         public string[] Ids { get; set; }
     }
 
@@ -253,5 +260,52 @@ namespace MediaInfoKeeper.Web {
         public bool Exists { get; set; }
 
         public long Length { get; set; }
+    }
+
+    [Route("/MediaInfoKeeper/Items/SearchSubhd", "POST")]
+    [Authenticated(Roles = "Admin")]
+    public class SearchSubhdRequest : IReturn<SearchSubhdResponse> {
+        public string[] Ids { get; set; }
+    }
+
+    [Route("/MediaInfoKeeper/Items/DownloadSubhd", "POST")]
+    [Authenticated(Roles = "Admin")]
+    public class DownloadSubhdRequest : IReturn<MediaInfoMenuResponse> {
+        public string Id { get; set; }
+        public string SubId { get; set; }
+        public string Filename { get; set; }
+        public int? SeasonNumber { get; set; }
+        public int? EpisodeNumber { get; set; }
+    }
+
+    [Route("/MediaInfoKeeper/Items/DownloadSubhdBatch", "POST")]
+    [Authenticated(Roles = "Admin")]
+    public class DownloadSubhdBatchRequest : IReturn<MediaInfoMenuResponse> {
+        public string Id { get; set; }
+        public string[] SubIds { get; set; }
+        public int[] SeasonNumbers { get; set; }
+        public int[] EpisodeNumbers { get; set; }
+    }
+
+    public class SearchSubhdResponse {
+        public string ItemName { get; set; }
+        public string SearchQuery { get; set; }
+        public List<SubhdSubtitleItem> Subtitles { get; set; }
+        public string Message { get; set; }
+        public int TotalEpisodes { get; set; }
+    }
+
+    public class SubhdSubtitleItem {
+        public string SubId { get; set; }
+        public string Title { get; set; }
+        public string MovieName { get; set; }
+        public string MovieYear { get; set; }
+        public string Group { get; set; }
+        public string Uploader { get; set; }
+        public List<string> Tags { get; set; }
+        public string Format { get; set; }
+        public string Size { get; set; }
+        public int Downloads { get; set; }
+        public int Rating { get; set; }
     }
 }

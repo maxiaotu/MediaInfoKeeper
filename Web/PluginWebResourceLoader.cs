@@ -49,7 +49,15 @@ namespace MediaInfoKeeper.Web {
                 const string source = "&&(elem.crossOrigin=initialSubtitleStream)";
                 var content = File.ReadAllText(pluginPath);
                 var patchedContent = content.Replace(source, string.Empty);
-                if (!string.Equals(content, patchedContent, StringComparison.Ordinal)) File.WriteAllText(pluginPath, patchedContent);
+                if (string.Equals(content, patchedContent, StringComparison.Ordinal)) return;
+                File.WriteAllText(pluginPath, patchedContent);
+            }
+            catch (UnauthorizedAccessException ex) {
+                Plugin.Instance.Logger.Debug("PatchHtmlVideoPlayer skipped: no write permission: {0}", ex.Message);
+            }
+            catch (IOException ex) {
+                Plugin.Instance.Logger.Debug("PatchHtmlVideoPlayer skipped: IO error: {0}", ex.Message);
+                Plugin.Instance.Logger.Debug(ex.StackTrace);
             }
             catch (Exception ex) {
                 Plugin.Instance.Logger.Warn("PatchHtmlVideoPlayer failed: {0}", ex.Message);
