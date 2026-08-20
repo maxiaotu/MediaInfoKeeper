@@ -285,6 +285,8 @@ namespace MediaInfoKeeper.Web {
         public string[] SubIds { get; set; }
         public int[] SeasonNumbers { get; set; }
         public int[] EpisodeNumbers { get; set; }
+        public int[] SelectedSeasons { get; set; }
+        public bool SkipExisting { get; set; }
     }
 
     public class SearchSubhdResponse {
@@ -293,6 +295,15 @@ namespace MediaInfoKeeper.Web {
         public List<SubhdSubtitleItem> Subtitles { get; set; }
         public string Message { get; set; }
         public int TotalEpisodes { get; set; }
+        public int TotalSeasons { get; set; }
+        public int EpisodesWithSubtitles { get; set; }
+        public List<SubhdSeasonSummary> Seasons { get; set; }
+    }
+
+    public class SubhdSeasonSummary {
+        public int SeasonNumber { get; set; }
+        public int EpisodeCount { get; set; }
+        public int WithSubtitles { get; set; }
     }
 
     public class SubhdSubtitleItem {

@@ -918,8 +918,12 @@ define(['connectionManager', 'globalize', 'loading', 'toast', 'confirm'], functi
     function showSubhdDialog(item, searchResult) {
         var subtitles = searchResult.Subtitles || [];
         var itemName = searchResult.ItemName || item.Name || '';
-        var targetSeason = Number(item && item.ParentIndexNumber);
+        var targetSeason = item && item.Type === 'Season'
+            ? Number(item.IndexNumber)
+            : Number(item && item.ParentIndexNumber);
         var targetEpisode = Number(item && item.IndexNumber);
+        var isEpisodeItem = item && item.Type === 'Episode' && Number.isFinite(targetEpisode) && targetEpisode > 0;
+        var isSeasonItem = item && item.Type === 'Season' && Number.isFinite(targetSeason) && targetSeason > 0;
 
         // 解析季号+集号，检测是否为剧集（用于一键批量下载整季）
         var episodeBest = {};
@@ -931,6 +935,10 @@ define(['connectionManager', 'globalize', 'loading', 'toast', 'confirm'], functi
                 return { season: parseInt(m[1], 10), ep: parseInt(m[2], 10) };
             }
             m = /(\d{1,2})x(\d{1,2})/i.exec(t);
+            if (m) {
+                return { season: parseInt(m[1], 10), ep: parseInt(m[2], 10) };
+            }
+            m = /第(\d{1,2})季第(\d{1,2})集/.exec(t);
             if (m) {
                 return { season: parseInt(m[1], 10), ep: parseInt(m[2], 10) };
             }
@@ -954,10 +962,18 @@ define(['connectionManager', 'globalize', 'loading', 'toast', 'confirm'], functi
             var sb = parseInt(b.split('-')[0], 10), eb = parseInt(b.split('-')[1], 10);
             return (sa - sb) || (ea - eb);
         });
+        if (isSeasonItem) {
+            epKeys = epKeys.filter(function (key) {
+                return parseInt(key.split('-')[0], 10) === targetSeason;
+            });
+        }
         var localEpisodeCount = Number(searchResult.TotalEpisodes) || 0;
+        var localSeasonCount = Number(searchResult.TotalSeasons) || 0;
+        var episodesWithSubs = Number(searchResult.EpisodesWithSubtitles) || 0;
+        var inventorySeasons = Array.isArray(searchResult.Seasons) ? searchResult.Seasons : [];
+        var isSeriesItem = item && item.Type === 'Series';
         var isSeries = epKeys.length >= 1 || localEpisodeCount >= 1;
         var selectedCount = localEpisodeCount > 0 ? localEpisodeCount : epKeys.length;
-        var isEpisodeItem = item && item.Type === 'Episode' && Number.isFinite(targetEpisode) && targetEpisode > 0;
 
         function getDownloadCount(subtitleItem) {
             var raw = subtitleItem && subtitleItem.Downloads;
@@ -969,23 +985,60 @@ define(['connectionManager', 'globalize', 'loading', 'toast', 'confirm'], functi
             return getDownloadCount(b) - getDownloadCount(a);
         }
 
-        var displaySubtitles = subtitles.slice();
+        function matchesScope(title) {
+            var parsed = parseSeasonEpisodeFromTitle(title || '');
+            if (!parsed) return !isEpisodeItem && !isSeasonItem;
+            if (isEpisodeItem) {
+                var seasonMatched = !Number.isFinite(targetSeason) || targetSeason <= 0 || parsed.season === targetSeason;
+                return seasonMatched && parsed.ep === targetEpisode;
+            }
+            if (isSeasonItem) {
+                return parsed.season === targetSeason;
+            }
+            return true;
+        }
+
+        var displaySubtitles = subtitles.filter(function (s) {
+            return matchesScope((s && s.Title) || '');
+        });
+        displaySubtitles.sort(compareByDownloadsDesc);
+
+        function seasonLabel(seasonNumber) {
+            return seasonNumber === 0 ? '特别篇' : ('第 ' + seasonNumber + ' 季');
+        }
+
+        function renderSubtitleRow(s) {
+            var tags = (s.Tags || []).join(' · ');
+            var movieInfo = s.MovieName ? s.MovieName : '';
+            if (s.MovieYear) movieInfo += ' (' + s.MovieYear + ')';
+            var row = '<div class="subhd-item" style="padding:10px 0;border-bottom:1px solid #333;cursor:pointer"' +
+                ' data-subid="' + escapeHtml(s.SubId) + '"' +
+                ' data-title="' + escapeHtml(s.Title || '') + '">' +
+                '<div style="font-weight:bold;margin-bottom:3px">' + (s.Title || s.SubId) + '</div>' +
+                '<div style="font-size:12px;color:#999">';
+            if (movieInfo) row += escapeHtml(movieInfo) + ' · ';
+            if (s.Group) row += '<span style="color:#28a745">' + escapeHtml(s.Group) + '</span> · ';
+            if (tags) row += escapeHtml(tags);
+            row += '</div><div style="font-size:12px;color:#666;margin-top:2px">';
+            if (s.Format) row += escapeHtml(s.Format) + ' · ';
+            if (s.Size) row += escapeHtml(s.Size) + ' · ';
+            if (s.Uploader) row += escapeHtml(s.Uploader) + ' · ';
+            if (s.Downloads) row += '⬇' + s.Downloads;
+            row += '</div></div>';
+            return row;
+        }
+
+        var scopeHint = '';
         if (isEpisodeItem) {
-            var exactEpisode = [];
-            var others = [];
-            displaySubtitles.forEach(function (s) {
-                var parsed = parseSeasonEpisodeFromTitle((s && s.Title) || '');
-                var seasonMatched = !Number.isFinite(targetSeason) || targetSeason <= 0 || (parsed && parsed.season === targetSeason);
-                var isExact = !!(parsed && parsed.ep === targetEpisode && seasonMatched);
-                if (isExact) {
-                    exactEpisode.push(s);
-                } else {
-                    others.push(s);
-                }
-            });
-            exactEpisode.sort(compareByDownloadsDesc);
-            others.sort(compareByDownloadsDesc);
-            displaySubtitles = exactEpisode.concat(others);
+            var seasonCode = Number.isFinite(targetSeason) && targetSeason > 0
+                ? ('S' + ('0' + targetSeason).slice(-2) + 'E' + ('0' + targetEpisode).slice(-2))
+                : ('E' + ('0' + targetEpisode).slice(-2));
+            scopeHint = '当前集 ' + seasonCode + ' · ' + displaySubtitles.length + ' 条';
+        } else if (isSeasonItem) {
+            scopeHint = seasonLabel(targetSeason) + ' · 库内 ' + localEpisodeCount + ' 集 · ' + displaySubtitles.length + ' 条';
+        } else if (isSeriesItem) {
+            scopeHint = '库内 ' + (localSeasonCount || inventorySeasons.length || 0) + ' 季 · ' +
+                localEpisodeCount + ' 集（已有字幕 ' + episodesWithSubs + ' 集）';
         }
 
         var html = '<div class="formDialogHeader">' +
@@ -993,42 +1046,69 @@ define(['connectionManager', 'globalize', 'loading', 'toast', 'confirm'], functi
             '<h3 class="formDialogHeaderTitle">字幕搜索</h3>' +
             '</div>' +
             '<div class="formDialogContent"><div class="dialogContentInner padded-left padded-right">' +
+            '<style>' +
+            '.subhd-actions{display:flex;gap:10px;flex-wrap:wrap;padding:8px 0 14px}' +
+            '.subhd-btn{flex:1;min-width:148px;padding:10px 14px;border:none;border-radius:4px;cursor:pointer;font-size:13px;line-height:1.3}' +
+            '.subhd-btn:disabled{opacity:.45;cursor:default}' +
+            '.subhd-btn-primary{background:#52B54B;color:#fff}' +
+            '.subhd-btn-secondary{background:#2a2a2a;color:#ddd}' +
+            '.subhd-season-box{margin:2px 0 4px;padding:8px 10px;background:#181818;border:1px solid #2c2c2c;border-radius:6px}' +
+            '.subhd-item:hover{background:#1a1a1a}' +
+            '</style>' +
             '<p class="secondaryText">' + escapeHtml(itemName) + '</p>' +
             '<p class="secondaryText" style="font-size:12px">搜索词: ' + escapeHtml(searchResult.SearchQuery || '') + '</p>';
+        if (scopeHint) {
+            html += '<p class="secondaryText" style="font-size:12px">' + escapeHtml(scopeHint) + '</p>';
+        }
 
-        var labelCount = selectedCount;
-        if (isSeries) {
-            html += '<div style="padding: 8px 0 12px 0;">' +
-                '<button type="button" id="subhdBatchBtn" class="emby-button raised" ' +
-                'style="width:100%;white-space:normal;line-height:1.25;padding:10px 12px">' +
-                '一键下载整季<br />（按库内 ' + labelCount + ' 集，自动选最高下载量）</button>' +
+        if (isSeries && !isEpisodeItem) {
+            if (isSeriesItem && inventorySeasons.length > 1) {
+                html += '<div id="subhdSeasonPicker" class="subhd-season-box" style="font-size:13px">';
+                inventorySeasons.forEach(function (season) {
+                    var seasonNo = Number(season.SeasonNumber) || 0;
+                    var missing = Math.max(0, (Number(season.EpisodeCount) || 0) - (Number(season.WithSubtitles) || 0));
+                    html += '<label style="display:flex;align-items:center;gap:8px;padding:5px 0;cursor:pointer">' +
+                        '<input type="checkbox" class="subhd-season-check" data-season="' + seasonNo + '" checked>' +
+                        seasonLabel(seasonNo) + ' · ' + (season.EpisodeCount || 0) + ' 集' +
+                        (missing > 0 ? '（缺 ' + missing + ' 集字幕）' : '（字幕已齐）') +
+                        '</label>';
+                });
+                html += '</div>';
+            }
+            html += '<div class="subhd-actions">' +
+                '<button type="button" id="subhdBatchMissingBtn" class="subhd-btn subhd-btn-primary">只下载缺少的字幕</button>' +
+                '<button type="button" id="subhdBatchAllBtn" class="subhd-btn subhd-btn-secondary">全部重新下载</button>' +
                 '</div>';
         }
 
-        if (!subtitles.length) {
+        if (!displaySubtitles.length) {
             html += '<p style="padding:2em 0;text-align:center">' + (searchResult.Message || '未找到字幕') + '</p>';
         } else {
             html += '<div style="max-height:50vh;overflow-y:auto;padding-right:6px">';
-            for (var i = 0; i < displaySubtitles.length; i++) {
-                var s = displaySubtitles[i];
-                var tags = (s.Tags || []).join(' · ');
-                var movieInfo = s.MovieName ? s.MovieName : '';
-                if (s.MovieYear) movieInfo += ' (' + s.MovieYear + ')';
-                html += '<div class="subhd-item" style="padding:10px 0;border-bottom:1px solid #333;cursor:pointer"' +
-                    ' data-subid="' + escapeHtml(s.SubId) + '"' +
-                    ' data-title="' + escapeHtml(s.Title || '') + '">' +
-                    '<div style="font-weight:bold;margin-bottom:3px">' + (s.Title || s.SubId) + '</div>' +
-                    '<div style="font-size:12px;color:#999">';
-                if (movieInfo) html += escapeHtml(movieInfo) + ' · ';
-                if (s.Group) html += '<span style="color:#28a745">' + escapeHtml(s.Group) + '</span> · ';
-                if (tags) html += escapeHtml(tags);
-                html += '</div>' +
-                    '<div style="font-size:12px;color:#666;margin-top:2px">';
-                if (s.Format) html += escapeHtml(s.Format) + ' · ';
-                if (s.Size) html += escapeHtml(s.Size) + ' · ';
-                if (s.Uploader) html += escapeHtml(s.Uploader) + ' · ';
-                if (s.Downloads) html += '⬇' + s.Downloads;
-                html += '</div></div>';
+            if (isSeriesItem) {
+                var grouped = {};
+                displaySubtitles.forEach(function (s) {
+                    var parsed = parseSeasonEpisodeFromTitle(s.Title || '');
+                    var key = parsed ? String(parsed.season) : 'other';
+                    if (!grouped[key]) grouped[key] = [];
+                    grouped[key].push(s);
+                });
+                Object.keys(grouped).sort(function (a, b) {
+                    if (a === 'other') return 1;
+                    if (b === 'other') return -1;
+                    return parseInt(a, 10) - parseInt(b, 10);
+                }).forEach(function (key) {
+                    var heading = key === 'other' ? '未识别季度' : seasonLabel(parseInt(key, 10));
+                    html += '<div style="padding:10px 0 4px;font-size:12px;color:#aaa;border-bottom:1px solid #444">' +
+                        escapeHtml(heading) + ' · ' + grouped[key].length + ' 条</div>';
+                    grouped[key].forEach(function (s) {
+                        html += renderSubtitleRow(s);
+                    });
+                });
+            } else {
+                displaySubtitles.forEach(function (s) {
+                    html += renderSubtitleRow(s);
+                });
             }
             html += '</div>';
         }
@@ -1041,11 +1121,64 @@ define(['connectionManager', 'globalize', 'loading', 'toast', 'confirm'], functi
             dlg.classList.add('formDialog');
             dlg.innerHTML = html;
 
-            var batchBtn = dlg.querySelector('#subhdBatchBtn');
-            if (batchBtn) {
-                batchBtn.addEventListener('click', function () {
-                    downloadSubhdBatch(item, epKeys, episodeBest, episodeMeta, dlg);
-                });
+            var missingBtn = dlg.querySelector('#subhdBatchMissingBtn');
+            var allBtn = dlg.querySelector('#subhdBatchAllBtn');
+            function selectedSeasonNumbers() {
+                var checks = dlg.querySelectorAll('.subhd-season-check');
+                if (!checks.length) {
+                    return isSeasonItem && Number.isFinite(targetSeason) ? [targetSeason] : [];
+                }
+                return Array.prototype.filter.call(checks, function (el) { return el.checked; })
+                    .map(function (el) { return parseInt(el.getAttribute('data-season'), 10); })
+                    .filter(function (n) { return Number.isFinite(n); });
+            }
+            function selectedEpisodeCount(skipExisting) {
+                var selected = selectedSeasonNumbers();
+                if (!inventorySeasons.length) {
+                    return skipExisting ? Math.max(0, selectedCount - episodesWithSubs) : selectedCount;
+                }
+                if (!selected.length && dlg.querySelectorAll('.subhd-season-check').length) return 0;
+                if (!selected.length) {
+                    return skipExisting ? Math.max(0, selectedCount - episodesWithSubs) : selectedCount;
+                }
+                return inventorySeasons.reduce(function (sum, season) {
+                    if (selected.indexOf(Number(season.SeasonNumber) || 0) < 0) return sum;
+                    var total = Number(season.EpisodeCount) || 0;
+                    var owned = Number(season.WithSubtitles) || 0;
+                    return sum + (skipExisting ? Math.max(0, total - owned) : total);
+                }, 0);
+            }
+            function refreshBatchButtons() {
+                var missingCount = selectedEpisodeCount(true);
+                var allCount = selectedEpisodeCount(false);
+                if (missingBtn) {
+                    missingBtn.textContent = '只下载缺少的字幕  ·  ' + missingCount + ' 集';
+                    missingBtn.disabled = missingCount <= 0;
+                }
+                if (allBtn) {
+                    allBtn.textContent = '全部重新下载  ·  ' + allCount + ' 集';
+                    allBtn.disabled = allCount <= 0;
+                }
+            }
+            function startBatchDownload(skipExisting) {
+                var selected = selectedSeasonNumbers();
+                var filteredKeys = epKeys;
+                if (selected.length) {
+                    filteredKeys = epKeys.filter(function (key) {
+                        return selected.indexOf(parseInt(key.split('-')[0], 10)) >= 0;
+                    });
+                }
+                downloadSubhdBatch(item, filteredKeys, episodeBest, episodeMeta, dlg, selected, skipExisting);
+            }
+            dlg.querySelectorAll('.subhd-season-check').forEach(function (el) {
+                el.addEventListener('change', refreshBatchButtons);
+            });
+            refreshBatchButtons();
+            if (missingBtn) {
+                missingBtn.addEventListener('click', function () { startBatchDownload(true); });
+            }
+            if (allBtn) {
+                allBtn.addEventListener('click', function () { startBatchDownload(false); });
             }
 
             var items = dlg.querySelectorAll('.subhd-item');
@@ -1075,6 +1208,10 @@ define(['connectionManager', 'globalize', 'loading', 'toast', 'confirm'], functi
 
         var seasonNumber = null;
         var episodeNumber = null;
+        if (item && item.Type === 'Episode') {
+            if (item.ParentIndexNumber > 0) seasonNumber = item.ParentIndexNumber;
+            if (item.IndexNumber > 0) episodeNumber = item.IndexNumber;
+        }
         var mEp = /S(\d{1,2})\s*E(\d{1,2})/i.exec(subTitle || '');
         if (mEp) {
             seasonNumber = parseInt(mEp[1], 10);
@@ -1084,6 +1221,12 @@ define(['connectionManager', 'globalize', 'loading', 'toast', 'confirm'], functi
             if (mEp) {
                 seasonNumber = parseInt(mEp[1], 10);
                 episodeNumber = parseInt(mEp[2], 10);
+            } else {
+                mEp = /第(\d{1,2})季第(\d{1,2})集/.exec(subTitle || '');
+                if (mEp) {
+                    seasonNumber = parseInt(mEp[1], 10);
+                    episodeNumber = parseInt(mEp[2], 10);
+                }
             }
         }
 
@@ -1112,7 +1255,7 @@ define(['connectionManager', 'globalize', 'loading', 'toast', 'confirm'], functi
         });
     }
 
-    function downloadSubhdBatch(item, epKeys, episodeBest, episodeMeta, dialog) {
+    function downloadSubhdBatch(item, epKeys, episodeBest, episodeMeta, dialog, selectedSeasons, skipExisting) {
         var itemId = item.Id || item.Guid || item.ItemId || '';
         var subIds = epKeys.map(function (k) { return episodeBest[k].SubId; });
         var seasonNumbers = epKeys.map(function (k) { return episodeMeta[k].season; });
@@ -1134,7 +1277,9 @@ define(['connectionManager', 'globalize', 'loading', 'toast', 'confirm'], functi
                 Id: itemId,
                 SubIds: subIds,
                 SeasonNumbers: seasonNumbers,
-                EpisodeNumbers: episodeNumbers
+                EpisodeNumbers: episodeNumbers,
+                SelectedSeasons: selectedSeasons || [],
+                SkipExisting: !!skipExisting
             }),
             contentType: 'application/json',
             dataType: 'json'
