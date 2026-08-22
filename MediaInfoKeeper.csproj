@@ -3,7 +3,7 @@
         <TargetFrameworks>net8.0;net6.0</TargetFrameworks>
         <Description>MediaInfoKeeper Emby plugin</Description>
         <PackageTags>emby;plugin;pms;media;server;</PackageTags>
-        <BaseOutputPath>..\MediaInfoKeeper-build\bin\</BaseOutputPath>
+        <BaseOutputPath>Build\bin\</BaseOutputPath>
         <AssemblyVersion>1.7.5.1</AssemblyVersion>
         <FileVersion>1.7.5.1</FileVersion>
         <Version>1.7.5</Version>

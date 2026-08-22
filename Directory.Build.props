@@ -1,6 +1,6 @@
 <Project>
     <PropertyGroup>
-        <BaseIntermediateOutputPath>..\MediaInfoKeeper-build\obj\</BaseIntermediateOutputPath>
+        <BaseIntermediateOutputPath>Build\obj\</BaseIntermediateOutputPath>
         <DefaultItemExcludes>$(DefaultItemExcludes);obj\**;Build\**;artifacts\**;MediaInfoKeeper-build\**</DefaultItemExcludes>
         <NuGetCacheVersion>20260408</NuGetCacheVersion>
     </PropertyGroup>
