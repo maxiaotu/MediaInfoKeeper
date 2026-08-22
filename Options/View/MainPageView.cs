@@ -4,6 +4,7 @@ using MediaBrowser.Common;
 using MediaBrowser.Model.Plugins;
 using MediaBrowser.Model.Plugins.UI.Views;
 using MediaBrowser.Model.Tasks;
+using MediaInfoKeeper.Common;
 using MediaInfoKeeper.Options.Store;
 using MediaInfoKeeper.Options.UIBaseClasses.Views;
 using MediaInfoKeeper.ScheduledTask;
@@ -37,8 +38,13 @@ namespace MediaInfoKeeper.Options.View {
         public MainPageOptions Options => ContentData as MainPageOptions;
 
         public override Task<IPluginUIView> RunCommand(string itemId, string commandId, string data) {
-            if (string.Equals(commandId, UpdatePluginDialogCommandId, StringComparison.Ordinal))
-                return Task.FromResult<IPluginUIView>(new UpdatePluginTaskDialogView(pluginInfo.Id, Options));
+            if (ForkInfo.EnableUpstreamUpdateCheck) {
+                if (string.Equals(commandId, UpdatePluginDialogCommandId, StringComparison.Ordinal))
+                    return Task.FromResult<IPluginUIView>(new UpdatePluginTaskDialogView(pluginInfo.Id, Options));
+
+                if (string.Equals(commandId, UpdatePluginRunCommandId, StringComparison.Ordinal))
+                    return RunScheduledTaskAsync<UpdatePluginTask>();
+            }
 
             if (string.Equals(commandId, RefreshRecentMetadataDialogCommandId, StringComparison.Ordinal))
                 return Task.FromResult<IPluginUIView>(new RefreshRecentMetadataTaskDialogView(pluginInfo.Id, Options));
@@ -53,9 +59,6 @@ namespace MediaInfoKeeper.Options.View {
 
             if (string.Equals(commandId, RestoreMediaInfoDialogCommandId, StringComparison.Ordinal))
                 return Task.FromResult<IPluginUIView>(new RestoreMediaInfoTaskDialogView(pluginInfo.Id, Options));
-
-            if (string.Equals(commandId, UpdatePluginRunCommandId, StringComparison.Ordinal))
-                return RunScheduledTaskAsync<UpdatePluginTask>();
 
             if (string.Equals(commandId, RefreshRecentMetadataRunCommandId, StringComparison.Ordinal))
                 return RunScheduledTaskAsync<RefreshRecentMetadataTask>();

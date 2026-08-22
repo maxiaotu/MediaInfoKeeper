@@ -8,6 +8,7 @@ using Emby.Web.GenericEdit.Elements;
 using Emby.Web.GenericEdit.Elements.List;
 using MediaBrowser.Model.Attributes;
 using MediaBrowser.Model.GenericEdit;
+using MediaInfoKeeper.Common;
 
 namespace MediaInfoKeeper.Options {
     public class MainPageOptions : EditableOptionsBase {
@@ -35,15 +36,15 @@ namespace MediaInfoKeeper.Options {
         [Browsable(false)] public bool ShowRefreshQueueStatus { get; set; } = true;
 
         public LabelItem UpdatePluginProjectUrl { get; set; } =
-            new("https://github.com/honue/MediaInfoKeeper") {
-                HyperLink = "https://github.com/honue/MediaInfoKeeper",
+            new(ForkInfo.UpstreamRepoUrl) {
+                HyperLink = ForkInfo.UpstreamRepoUrl,
                 Icon = IconNames.open_in_new
             };
 
-        [DisplayName("版本信息")] public StatusItem UpdatePluginVersionStatus { get; set; } = new("版本信息", "当前版本：未知\n最新版本：加载中");
+        [DisplayName("版本信息")] public StatusItem UpdatePluginVersionStatus { get; set; } = new("版本信息", "当前版本：未知");
 
         [DisplayName("更新说明")]
-        [Description("始终显示全部 GitHub Releases 的发布记录；预发布版会额外标记为 [Prerelease]。")]
+        [Description("显示上游 MediaInfoKeeper 的 GitHub Releases 发布记录；预发布版会额外标记为 [Prerelease]。")]
         public string UpdatePluginReleaseHistoryBody { get; set; } = "加载中";
 
         [DisplayName("启用插件")]
@@ -160,8 +161,12 @@ namespace MediaInfoKeeper.Options {
         }
 
         private GenericItemList BuildScheduledTaskEntries() {
-            return new GenericItemList(new[] {
-                CreateScheduledTaskEntry("更新插件", "main.scheduled.updatePlugin", "main.scheduled.run.updatePlugin"),
+            var entries = new List<GenericListItem>();
+            if (ForkInfo.EnableUpstreamUpdateCheck)
+                entries.Add(CreateScheduledTaskEntry("更新插件", "main.scheduled.updatePlugin",
+                    "main.scheduled.run.updatePlugin"));
+
+            entries.AddRange(new[] {
                 CreateScheduledTaskEntry("刷新媒体元数据", "main.scheduled.refreshRecentMetadata",
                     "main.scheduled.run.refreshRecentMetadata"),
                 CreateScheduledTaskEntry("备份媒体信息", "main.scheduled.exportExistingMediaInfo",
@@ -172,6 +177,8 @@ namespace MediaInfoKeeper.Options {
                     "main.scheduled.run.submitTheIntroDbMarkers"),
                 CreateScheduledTaskEntry("重启Emby", null, "main.scheduled.run.restartEmby")
             });
+
+            return new GenericItemList(entries);
         }
 
         private static GenericListItem CreateScheduledTaskEntry(string primaryText, string commandId, string runCommandId) {

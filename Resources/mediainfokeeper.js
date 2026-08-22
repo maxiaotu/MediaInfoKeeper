@@ -393,6 +393,150 @@ define(['connectionManager', 'globalize', 'loading', 'toast', 'confirm'], functi
         return item.Id || item.ItemId || item.Guid || '';
     }
 
+    function isVersionAwareItem(item) {
+        return item && (item.Type === 'Movie' || item.Type === 'Video' || item.Type === 'Episode');
+    }
+
+    function fetchItemMediaSources(item) {
+        var apiClient = connectionManager.currentApiClient();
+        var itemId = getCommandItemId(item);
+        if (!apiClient || !itemId) {
+            return Promise.resolve(item || null);
+        }
+
+        var userId = typeof apiClient.getCurrentUserId === 'function' ? apiClient.getCurrentUserId() : null;
+        var endpoint = userId ? ('Users/' + userId + '/Items/' + itemId) : ('Items/' + itemId);
+        var query = new URLSearchParams({ Fields: 'MediaSources,UserData' }).toString();
+        return apiClient.ajax({
+            type: 'GET',
+            url: apiClient.getUrl(endpoint) + '?' + query,
+            dataType: 'json'
+        }).catch(function () {
+            return item;
+        });
+    }
+
+    function detectSelectedMediaSourceId(fullItem, sources) {
+        if (!sources || sources.length <= 1) {
+            return sources && sources[0] ? sources[0].Id : null;
+        }
+
+        var userData = fullItem && fullItem.UserData;
+        if (userData && userData.LastPlayedMediaSourceId &&
+            sources.some(function (s) { return s.Id === userData.LastPlayedMediaSourceId; })) {
+            return userData.LastPlayedMediaSourceId;
+        }
+
+        var detailRoot = document.querySelector('.detailPageMainContent, .itemDetailPage, .page[type="itemdetail"]');
+        if (detailRoot) {
+            var selects = detailRoot.querySelectorAll('select[is="emby-select"], emby-select select, select.emby-select');
+            for (var i = 0; i < selects.length; i++) {
+                var select = selects[i];
+                var value = select.value;
+                if (value && sources.some(function (s) { return s.Id === value; })) {
+                    return value;
+                }
+                var selected = select.selectedOptions && select.selectedOptions[0];
+                if (!selected) continue;
+                var label = (selected.textContent || '').trim();
+                if (!label) continue;
+                var byName = sources.find(function (s) {
+                    var name = (s.Name || '').trim();
+                    return name && (label === name || label.indexOf(name) >= 0 || name.indexOf(label) >= 0);
+                });
+                if (byName) return byName.Id;
+            }
+        }
+
+        return null;
+    }
+
+    function showMediaSourcePickerDialog(sources) {
+        return Emby.importModule('./modules/dialoghelper/dialoghelper.js').then(function (mod) {
+            var dialogHelper = mod && mod.default ? mod.default : mod;
+            var html = '<div class="formDialogHeader">' +
+                '<button type="button" is="emby-dialogclosebutton" closetype="cancel"></button>' +
+                '<h3 class="formDialogHeaderTitle">选择版本</h3>' +
+                '</div>' +
+                '<div class="formDialogContent"><div class="dialogContentInner padded-left padded-right">' +
+                '<p class="secondaryText" style="font-size:13px;margin-bottom:10px">检测到多个版本，请选择要操作的版本：</p>' +
+                '<div style="max-height:45vh;overflow-y:auto">';
+
+            sources.forEach(function (source, index) {
+                var name = source.Name || ('版本 ' + (index + 1));
+                var path = source.Path || '';
+                var folder = path.replace(/[\\/][^\\/]+$/, '');
+                html += '<label style="display:block;padding:10px 0;border-bottom:1px solid #333;cursor:pointer">' +
+                    '<input type="radio" name="subhdMediaSource" value="' + escapeHtml(source.Id) + '"' +
+                    (index === 0 ? ' checked' : '') + ' style="margin-right:8px">' +
+                    '<span style="font-weight:bold">' + escapeHtml(name) + '</span>' +
+                    (folder ? '<br><span style="font-size:12px;color:#888;margin-left:22px">' + escapeHtml(folder) + '</span>' : '') +
+                    '</label>';
+            });
+
+            html += '</div>' +
+                '<div style="display:flex;justify-content:flex-end;gap:10px;padding-top:14px">' +
+                '<button type="button" id="mediaSourcePickCancel" class="emby-button">取消</button>' +
+                '<button type="button" id="mediaSourcePickOk" class="emby-button raised">确定</button>' +
+                '</div></div></div>';
+
+            var dlg = dialogHelper.createDialog({ size: 'small', removeOnClose: true });
+            dlg.classList.add('formDialog');
+            dlg.innerHTML = html;
+
+            return new Promise(function (resolve, reject) {
+                dlg.querySelector('#mediaSourcePickCancel').addEventListener('click', function () {
+                    dialogHelper.close(dlg);
+                    reject(new Error('cancelled'));
+                });
+                dlg.querySelector('#mediaSourcePickOk').addEventListener('click', function () {
+                    var checked = dlg.querySelector('input[name="subhdMediaSource"]:checked');
+                    dialogHelper.close(dlg);
+                    if (!checked || !checked.value) {
+                        reject(new Error('no selection'));
+                        return;
+                    }
+                    resolve(checked.value);
+                });
+                dialogHelper.open(dlg);
+            });
+        });
+    }
+
+    function resolveMediaSourceContext(items) {
+        if (!items || items.length !== 1 || !isVersionAwareItem(items[0])) {
+            return Promise.resolve({
+                ids: (items || []).map(getCommandItemId).filter(Boolean),
+                mediaSourceId: null
+            });
+        }
+
+        return fetchItemMediaSources(items[0]).then(function (fullItem) {
+            var sources = (fullItem && fullItem.MediaSources) || [];
+            if (sources.length <= 1) {
+                return {
+                    ids: [getCommandItemId(items[0])],
+                    mediaSourceId: sources[0] ? sources[0].Id : null
+                };
+            }
+
+            var detected = detectSelectedMediaSourceId(fullItem, sources);
+            if (detected) {
+                return {
+                    ids: [getCommandItemId(items[0])],
+                    mediaSourceId: detected
+                };
+            }
+
+            return showMediaSourcePickerDialog(sources).then(function (mediaSourceId) {
+                return {
+                    ids: [getCommandItemId(items[0])],
+                    mediaSourceId: mediaSourceId
+                };
+            });
+        });
+    }
+
     function getLibraryDisplayName(item) {
         if (!item) {
             return '';
@@ -611,7 +755,7 @@ define(['connectionManager', 'globalize', 'loading', 'toast', 'confirm'], functi
             });
         },
 
-        scanExternalFiles: function (ids) {
+        scanExternalFiles: function (ids, mediaSourceId) {
             if (!ids || !ids.length) {
                 return Promise.resolve();
             }
@@ -625,7 +769,10 @@ define(['connectionManager', 'globalize', 'loading', 'toast', 'confirm'], functi
             }).then(function () {
                 loading.show();
                 const apiClient = connectionManager.currentApiClient();
-                return postJson(apiClient, 'MediaInfoKeeper/Items/ScanExternalFiles', {Ids: ids}).then(function (result) {
+                return postJson(apiClient, 'MediaInfoKeeper/Items/ScanExternalFiles', {
+                    Ids: ids,
+                    MediaSourceId: mediaSourceId || null
+                }).then(function (result) {
                     toast(getResultMessage(result, 'scan_external_files'));
                 }).catch(function (err) {
                     toast(getErrorMessage('scan_external_files', err));
@@ -635,7 +782,7 @@ define(['connectionManager', 'globalize', 'loading', 'toast', 'confirm'], functi
             });
         },
 
-        renameSubtitles: function (ids) {
+        renameSubtitles: function (ids, mediaSourceId) {
             if (!ids || !ids.length) {
                 return Promise.resolve();
             }
@@ -649,7 +796,10 @@ define(['connectionManager', 'globalize', 'loading', 'toast', 'confirm'], functi
             }).then(function () {
                 loading.show();
                 const apiClient = connectionManager.currentApiClient();
-                return postJson(apiClient, 'MediaInfoKeeper/Items/RenameSubtitles', {Ids: ids}).then(function (result) {
+                return postJson(apiClient, 'MediaInfoKeeper/Items/RenameSubtitles', {
+                    Ids: ids,
+                    MediaSourceId: mediaSourceId || null
+                }).then(function (result) {
                     toast(getResultMessage(result, 'rename_subtitles'));
                 }).catch(function (err) {
                     toast(getErrorMessage('rename_subtitles', err));
@@ -883,7 +1033,7 @@ define(['connectionManager', 'globalize', 'loading', 'toast', 'confirm'], functi
     };
 
     // ========== SubHD 字幕搜索 ==========
-    function searchSubhd(item) {
+    function searchSubhd(item, mediaSourceId) {
         var itemId = item.Id || item.Guid || item.ItemId || '';
 
         loading.show();
@@ -899,7 +1049,10 @@ define(['connectionManager', 'globalize', 'loading', 'toast', 'confirm'], functi
         apiClient.ajax({
             type: 'POST',
             url: url,
-            data: JSON.stringify({ Ids: [itemId] }),
+            data: JSON.stringify({
+                Ids: [itemId],
+                MediaSourceId: mediaSourceId || null
+            }),
             contentType: 'application/json',
             dataType: 'json'
         }).then(function (result) {
@@ -908,14 +1061,14 @@ define(['connectionManager', 'globalize', 'loading', 'toast', 'confirm'], functi
                 toast(result && result.Message ? result.Message : '搜索无结果');
                 return;
             }
-            showSubhdDialog(item, result);
+            showSubhdDialog(item, result, mediaSourceId);
         }).catch(function (err) {
             loading.hide();
             toast('字幕搜索失败: ' + ((err && err.message) || (err && err.statusText) || '网络错误'));
         });
     }
 
-    function showSubhdDialog(item, searchResult) {
+    function showSubhdDialog(item, searchResult, mediaSourceId) {
         var subtitles = searchResult.Subtitles || [];
         var itemName = searchResult.ItemName || item.Name || '';
         var targetSeason = item && item.Type === 'Season'
@@ -1168,7 +1321,7 @@ define(['connectionManager', 'globalize', 'loading', 'toast', 'confirm'], functi
                         return selected.indexOf(parseInt(key.split('-')[0], 10)) >= 0;
                     });
                 }
-                downloadSubhdBatch(item, filteredKeys, episodeBest, episodeMeta, dlg, selected, skipExisting);
+                    downloadSubhdBatch(item, filteredKeys, episodeBest, episodeMeta, dlg, selected, skipExisting, mediaSourceId);
             }
             dlg.querySelectorAll('.subhd-season-check').forEach(function (el) {
                 el.addEventListener('change', refreshBatchButtons);
@@ -1186,7 +1339,7 @@ define(['connectionManager', 'globalize', 'loading', 'toast', 'confirm'], functi
                 el.addEventListener('click', function () {
                     var subId = el.getAttribute('data-subid');
                     var title = el.getAttribute('data-title');
-                    downloadSubhd(item, subId, title, dlg);
+                    downloadSubhd(item, subId, title, dlg, mediaSourceId);
                 });
             });
 
@@ -1194,7 +1347,7 @@ define(['connectionManager', 'globalize', 'loading', 'toast', 'confirm'], functi
         });
     }
 
-    function downloadSubhd(item, subId, subTitle, dialog) {
+    function downloadSubhd(item, subId, subTitle, dialog, mediaSourceId) {
         var itemId = item.Id || item.Guid || item.ItemId || '';
         var apiClient = connectionManager.currentApiClient();
 
@@ -1238,7 +1391,8 @@ define(['connectionManager', 'globalize', 'loading', 'toast', 'confirm'], functi
                 SubId: subId,
                 Filename: '',
                 SeasonNumber: seasonNumber,
-                EpisodeNumber: episodeNumber
+                EpisodeNumber: episodeNumber,
+                MediaSourceId: mediaSourceId || null
             }),
             contentType: 'application/json',
             dataType: 'json'
@@ -1255,7 +1409,7 @@ define(['connectionManager', 'globalize', 'loading', 'toast', 'confirm'], functi
         });
     }
 
-    function downloadSubhdBatch(item, epKeys, episodeBest, episodeMeta, dialog, selectedSeasons, skipExisting) {
+    function downloadSubhdBatch(item, epKeys, episodeBest, episodeMeta, dialog, selectedSeasons, skipExisting, mediaSourceId) {
         var itemId = item.Id || item.Guid || item.ItemId || '';
         var subIds = epKeys.map(function (k) { return episodeBest[k].SubId; });
         var seasonNumbers = epKeys.map(function (k) { return episodeMeta[k].season; });
@@ -1279,7 +1433,8 @@ define(['connectionManager', 'globalize', 'loading', 'toast', 'confirm'], functi
                 SeasonNumbers: seasonNumbers,
                 EpisodeNumbers: episodeNumbers,
                 SelectedSeasons: selectedSeasons || [],
-                SkipExisting: !!skipExisting
+                SkipExisting: !!skipExisting,
+                MediaSourceId: mediaSourceId || null
             }),
             contentType: 'application/json',
             dataType: 'json'
@@ -1395,11 +1550,15 @@ define(['connectionManager', 'globalize', 'loading', 'toast', 'confirm'], functi
                 }
 
                 if (command === 'scan_external_files') {
-                    return api.scanExternalFiles(ids);
+                    return resolveMediaSourceContext(items).then(function (ctx) {
+                        return api.scanExternalFiles(ctx.ids, ctx.mediaSourceId);
+                    }).catch(function () {});
                 }
 
                 if (command === 'rename_subtitles') {
-                    return api.renameSubtitles(ids);
+                    return resolveMediaSourceContext(items).then(function (ctx) {
+                        return api.renameSubtitles(ctx.ids, ctx.mediaSourceId);
+                    }).catch(function () {});
                 }
 
                 if (command === 'set_intro') {
@@ -1411,7 +1570,9 @@ define(['connectionManager', 'globalize', 'loading', 'toast', 'confirm'], functi
                 }
 
                 if (command === 'search_subhd') {
-                    return searchSubhd(items[0]);
+                    return resolveMediaSourceContext(items).then(function (ctx) {
+                        return searchSubhd(items[0], ctx.mediaSourceId);
+                    }).catch(function () {});
                 }
             }
         };

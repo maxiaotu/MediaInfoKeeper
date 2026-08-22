@@ -16,6 +16,7 @@ using MediaBrowser.Model.Activity;
 using MediaBrowser.Model.Logging;
 using MediaBrowser.Model.Serialization;
 using MediaBrowser.Model.Tasks;
+using MediaInfoKeeper.Common;
 using MediaInfoKeeper.Options;
 using MediaInfoKeeper.Services;
 
@@ -69,6 +70,8 @@ namespace MediaInfoKeeper.ScheduledTask {
 
 
         public IEnumerable<TaskTriggerInfo> GetDefaultTriggers() {
+            if (!ForkInfo.EnableUpstreamUpdateCheck) yield break;
+
             yield return new TaskTriggerInfo {
                 Type = TaskTriggerInfo.TriggerWeekly,
                 DayOfWeek = DayOfWeek.Monday,
@@ -85,6 +88,12 @@ namespace MediaInfoKeeper.ScheduledTask {
         public async Task Execute(CancellationToken cancellationToken, IProgress<double> progress) {
             await Task.Yield();
             progress.Report(0);
+
+            if (!ForkInfo.EnableUpstreamUpdateCheck) {
+                logger.Info("当前版本不支持自动更新插件，请手动部署 MediaInfoKeeper.dll。");
+                progress.Report(100);
+                return;
+            }
 
             try {
                 var updatePluginOptions = Plugin.Instance.Options.GetEffectiveUpdatePluginOptions();

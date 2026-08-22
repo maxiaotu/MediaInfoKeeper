@@ -29,7 +29,10 @@ namespace MediaInfoKeeper.Web.Handler {
                 return response;
             }
 
-            var targetItems = _expandToTargetItems(request.Ids).OfType<Video>().ToList();
+            var targetItems = VersionItemResolver.ResolveTargetVideos(
+                request.Ids,
+                request.MediaSourceId,
+                _expandToTargetItems);
             response.Total = targetItems.Count;
 
             if (targetItems.Count == 0) {

@@ -221,6 +221,8 @@ namespace MediaInfoKeeper.Web {
                 return response;
             }
 
+            item = VersionItemResolver.Resolve(item, request.MediaSourceId);
+
             var searchQuery = BuildSearchQuery(item);
             response.SearchQuery = searchQuery;
             response.ItemName = BuildDisplayItemName(item);
@@ -291,6 +293,8 @@ namespace MediaInfoKeeper.Web {
                 response.Failed = 1;
                 return response;
             }
+
+            item = VersionItemResolver.Resolve(item, request.MediaSourceId);
 
             var targetItem = item;
             if (request.SeasonNumber.HasValue && request.EpisodeNumber.HasValue) {

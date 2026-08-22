@@ -709,19 +709,32 @@ namespace MediaInfoKeeper {
 
         private string GetCurrentVersion() {
             var releaseTag = GetAssemblyReleaseTag(GetType().Assembly);
-            if (!string.IsNullOrWhiteSpace(releaseTag)) return releaseTag;
+            string baseVersion;
+            if (!string.IsNullOrWhiteSpace(releaseTag)) {
+                baseVersion = releaseTag;
+            }
+            else {
+                var version = GetType().Assembly.GetName().Version;
+                baseVersion = version == null ? null : $"v{version.ToString(4)}";
+            }
 
-            var version = GetType().Assembly.GetName().Version;
-            return version == null ? "未知" : $"v{version.ToString(4)}";
+            return ForkInfo.FormatDisplayVersion(baseVersion);
         }
 
         private StatusItem BuildVersionStatusItem() {
             var currentVersion = GetCurrentVersion();
-            var latestVersion = releaseInfoService.LatestVersion;
+            var currentText = string.IsNullOrWhiteSpace(currentVersion) ? "未知" : currentVersion;
 
+            if (!ForkInfo.EnableUpstreamUpdateCheck) {
+                return new StatusItem(
+                    "版本信息",
+                    $"当前版本：{currentText}",
+                    ItemStatus.Succeeded);
+            }
+
+            var latestVersion = releaseInfoService.LatestVersion;
             var normalizedCurrent = NormalizeVersionLabel(currentVersion);
             var normalizedLatest = NormalizeVersionLabel(latestVersion);
-            var currentText = string.IsNullOrWhiteSpace(currentVersion) ? "未知" : currentVersion;
             var latestText = string.IsNullOrWhiteSpace(latestVersion) ? "加载中" : latestVersion;
 
             var status = ItemStatus.Unknown;

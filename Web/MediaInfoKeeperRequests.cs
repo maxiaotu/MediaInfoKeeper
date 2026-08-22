@@ -57,6 +57,7 @@ namespace MediaInfoKeeper.Web {
     [Authenticated(Roles = "Admin")]
     public class ScanExternalFilesRequest : IReturn<MediaInfoMenuResponse> {
         public string[] Ids { get; set; }
+        public string MediaSourceId { get; set; }
     }
 
     [Route("/MediaInfoKeeper/Items/SetIntro", "POST")]
@@ -78,6 +79,7 @@ namespace MediaInfoKeeper.Web {
     [Authenticated(Roles = "Admin")]
     public class RenameSubtitlesRequest : IReturn<MediaInfoMenuResponse> {
         public string[] Ids { get; set; }
+        public string MediaSourceId { get; set; }
     }
 
     [Route("/MediaInfoKeeper/Items/DebugMediaInfo", "GET")]
@@ -266,6 +268,7 @@ namespace MediaInfoKeeper.Web {
     [Authenticated(Roles = "Admin")]
     public class SearchSubhdRequest : IReturn<SearchSubhdResponse> {
         public string[] Ids { get; set; }
+        public string MediaSourceId { get; set; }
     }
 
     [Route("/MediaInfoKeeper/Items/DownloadSubhd", "POST")]
@@ -276,6 +279,7 @@ namespace MediaInfoKeeper.Web {
         public string Filename { get; set; }
         public int? SeasonNumber { get; set; }
         public int? EpisodeNumber { get; set; }
+        public string MediaSourceId { get; set; }
     }
 
     [Route("/MediaInfoKeeper/Items/DownloadSubhdBatch", "POST")]
