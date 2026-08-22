@@ -67,7 +67,7 @@ namespace MediaInfoKeeper {
         public static StrmFileWatcher StrmFileWatcher { get; private set; }
         public static ExternalFiles ExternalFiles { get; private set; }
         public static DanmuService DanmuService { get; private set; }
-        public static ItemAddedSubhdService ItemAddedSubhdService { get; private set; }
+        internal static ItemAddedSubhdService ItemAddedSubhdService { get; private set; }
         internal static ReleaseInfoService ReleaseInfoService { get; private set; }
 
         private readonly Guid id = new("874D7056-072D-43A4-16DD-BC32665B9563");
