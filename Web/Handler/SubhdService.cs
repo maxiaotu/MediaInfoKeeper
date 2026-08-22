@@ -276,6 +276,10 @@ namespace MediaInfoKeeper.Web.Handler {
                 savedFiles.Add(targetName);
             }
 
+            if (savedFiles.Count == 0) {
+                return "字幕已存在，无需覆盖";
+            }
+
             return string.Join(", ", savedFiles);
             } finally {
                 CleanupDownloadTemp(tempDir);

@@ -54,7 +54,7 @@ namespace MediaInfoKeeper.Web.Handler {
                     }
 
                     Plugin.ExternalFiles
-                        .UpdateExternalFiles(item, refreshOptions, false, CancellationToken.None)
+                        .UpdateExternalFiles(item, refreshOptions, true, CancellationToken.None)
                         .GetAwaiter()
                         .GetResult();
                     response.Succeeded++;
@@ -72,6 +72,34 @@ namespace MediaInfoKeeper.Web.Handler {
             Plugin.Instance.Logger.Info(
                 $"ShortcutMenu ScanExternalFiles result: total={response.Total}, processed={response.Processed}, succeeded={response.Succeeded}, failed={response.Failed}, skipped={response.Skipped}, message={response.Message}");
             return response;
+        }
+
+        public int ForceUpdateItems(IEnumerable<BaseItem> items) {
+            if (Plugin.ExternalFiles == null || !Plugin.ExternalFiles.IsAvailable) return 0;
+
+            var refreshOptions = Plugin.ExternalFiles.GetRefreshOptions();
+            var succeeded = 0;
+            var seen = new HashSet<long>();
+
+            foreach (var item in items ?? Enumerable.Empty<BaseItem>()) {
+                if (item == null || !seen.Add(item.InternalId)) continue;
+
+                try {
+                    Plugin.ExternalFiles
+                        .UpdateExternalFiles(item, refreshOptions, true, CancellationToken.None)
+                        .GetAwaiter()
+                        .GetResult();
+                    succeeded++;
+                    Plugin.Instance.Logger.Info($"下载后已刷新外挂文件: {item.Path ?? item.Name}");
+                }
+                catch (Exception ex) {
+                    Plugin.Instance.Logger.Error($"下载后刷新外挂文件失败: {item.Path ?? item.Name}");
+                    Plugin.Instance.Logger.Error(ex.Message);
+                    Plugin.Instance.Logger.Debug(ex.StackTrace);
+                }
+            }
+
+            return succeeded;
         }
     }
 }

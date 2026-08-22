@@ -339,7 +339,10 @@ namespace MediaInfoKeeper.Web {
                         saveBestOnly: true)
                     .GetAwaiter().GetResult();
                 response.Succeeded = 1;
-                response.Message = result;
+                var scanned = _scanExternalFilesHandler.ForceUpdateItems(new[] { targetItem });
+                response.Message = scanned > 0
+                    ? $"{result} · 已刷新外挂"
+                    : $"{result} · 外挂未刷新（可手动刷新外挂文件）";
             } catch (Exception ex) {
                 Plugin.Instance.Logger.Error($"SubHD download error: {ex.Message}");
                 response.Failed = 1;
@@ -408,6 +411,7 @@ namespace MediaInfoKeeper.Web {
             var ok = 0;
             var fail = 0;
             var errors = new List<string>();
+            var downloadedItems = new List<BaseItem>();
 
             foreach (var targetEp in localEpisodes) {
                 var epNum = targetEp.IndexNumber.Value;
@@ -424,6 +428,12 @@ namespace MediaInfoKeeper.Web {
                 }
 
                 var mediaDir = targetEp.ContainingFolderPath ?? Path.GetDirectoryName(targetEp.Path);
+                if (string.IsNullOrWhiteSpace(mediaDir)) {
+                    fail++;
+                    errors.Add($"S{seasonNum:D2}E{epNum:D2}: 无法确定媒体目录");
+                    continue;
+                }
+
                 var baseFilename = Path.GetFileNameWithoutExtension(targetEp.Path);
                 try {
                     _subhdService.DownloadAsync(
@@ -435,6 +445,7 @@ namespace MediaInfoKeeper.Web {
                             saveBestOnly: true)
                         .GetAwaiter().GetResult();
                     ok++;
+                    downloadedItems.Add(targetEp);
                 } catch (Exception ex) {
                     fail++;
                     errors.Add($"S{seasonNum:D2}E{epNum:D2}: {ex.Message}");
@@ -453,6 +464,13 @@ namespace MediaInfoKeeper.Web {
                 if (errors.Count > 3) {
                     response.Message += $" · 另有 {errors.Count - 3} 条失败";
                 }
+            }
+
+            if (downloadedItems.Count > 0) {
+                var scanned = _scanExternalFilesHandler.ForceUpdateItems(downloadedItems);
+                response.Message += scanned > 0
+                    ? $" · 已刷新外挂 {scanned} 集"
+                    : " · 外挂未刷新（可手动刷新外挂文件）";
             }
 
             return response;
