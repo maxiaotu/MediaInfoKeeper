@@ -54,16 +54,14 @@ namespace MediaInfoKeeper.Web {
                 File.WriteAllText(pluginPath, patchedContent);
             }
             catch (UnauthorizedAccessException ex) {
-                Plugin.Instance.Logger.Debug("PatchHtmlVideoPlayer skipped: no write permission: {0}", ex.Message);
+                Plugin.Instance.Logger.Warn(
+                    "PatchHtmlVideoPlayer failed：移除跨域限制失败，无权限修改 dashboard 文件 {0}，请检查 Emby 进程用户和目录挂载权限。",
+                    pluginPath);
+                Plugin.Instance.Logger.Debug(ex.StackTrace);
             }
             catch (IOException ex) {
                 Plugin.Instance.Logger.Debug("PatchHtmlVideoPlayer skipped: IO error: {0}", ex.Message);
                 Plugin.Instance.Logger.Debug(ex.StackTrace);
-            }
-            catch (UnauthorizedAccessException ex) {
-                Plugin.Instance.Logger.Error(
-                    "PatchHtmlVideoPlayer failed：移除跨域限制失败，无权限修改 dashboard 文件 {0}，请检查 Emby 进程用户和目录挂载权限。", pluginPath);
-                Plugin.Instance.Logger.Error(ex.StackTrace);
             }
             catch (Exception ex) {
                 Plugin.Instance.Logger.Warn("PatchHtmlVideoPlayer failed: {0}", ex.Message);
