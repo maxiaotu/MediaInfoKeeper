@@ -384,6 +384,7 @@ namespace MediaInfoKeeper {
             if (options == null) return;
 
             options.MainPage ??= new MainPageOptions();
+            options.MainPage.EnsureItemAddedTaskEditor();
             options.MainPage.ScheduledTasksEditor ??= new MainPageOptions.ScheduledTaskEditorOptions();
             options.MediaInfo ??= new MediaInfoOptions();
             options.IntroSkip ??= new IntroSkipOptions();
@@ -405,7 +406,15 @@ namespace MediaInfoKeeper {
         private void NormalizeScopedLibraryOptions(PluginConfiguration options) {
             if (options?.MainPage == null) return;
 
-            options.MainPage.CatchupLibraries = NormalizeScopedLibraries(options.MainPage.CatchupLibraries);
+            options.MainPage.EnsureItemAddedTaskEditor();
+            var itemAddedTaskEditor = options.MainPage.ItemAddedTaskEditor;
+            itemAddedTaskEditor.ItemAddedMediaInfoLibraries =
+                NormalizeScopedLibraries(itemAddedTaskEditor.ItemAddedMediaInfoLibraries);
+            itemAddedTaskEditor.ItemAddedRefreshMetadataLibraries =
+                NormalizeScopedLibraries(itemAddedTaskEditor.ItemAddedRefreshMetadataLibraries);
+            itemAddedTaskEditor.ItemAddedIntroScanLibraries =
+                NormalizeScopedLibraries(itemAddedTaskEditor.ItemAddedIntroScanLibraries);
+
             var scheduledTasksEditor = options.MainPage.ScheduledTasksEditor;
             if (scheduledTasksEditor != null) {
                 scheduledTasksEditor.RefreshRecentMetadata.RefreshRecentMetadataLibraries =
@@ -507,24 +516,30 @@ namespace MediaInfoKeeper {
                         // 未启用持久化，直接跳过。
                         return;
 
+                    var pluginOptions = OptionsStore.GetOptions();
+                    var itemAddedOptions = pluginOptions?.MainPage?.ItemAddedTaskEditor;
+                    var libraryScopeKeys = LibraryService.GetItemLibraryScopeKeys(item);
+                    var extractMediaInfo = LibraryService.IsLibraryScopeMatch(
+                        libraryScopeKeys,
+                        itemAddedOptions?.ItemAddedMediaInfoLibraries);
+                    var refreshMetadata = LibraryService.IsLibraryScopeMatch(
+                        libraryScopeKeys,
+                        itemAddedOptions?.ItemAddedRefreshMetadataLibraries);
+                    var scanIntro = item is Episode && LibraryService.IsLibraryScopeMatch(
+                        libraryScopeKeys,
+                        itemAddedOptions?.ItemAddedIntroScanLibraries);
+
                     if (!(item is Video) && !(item is Audio)) {
                         // 仅处理音视频条目,补刷 Series Season 等等。
-                        if (item is Folder)
+                        if (item is Folder && refreshMetadata) {
                             _ = MetaDataRunner.RefreshMetaDataAsync(itemId, priority: RefreshPriority.Highest,
                                 allowFfProcess: true);
+                        }
 
                         return;
                     }
 
                     Logger.Info($"新入库事件 {item.FileName ?? item.Path}");
-
-                    if (!LibraryService.IsItemInCatchupLibraryScope(item)) {
-                        // 条目不在选定媒体库范围内。
-                        Logger.Info("跳过处理: 不在选定媒体库范围，不提取媒体信息");
-                        _ = MetaDataRunner.RefreshMetaDataAsync(itemId, priority: RefreshPriority.Highest,
-                            allowFfProcess: false);
-                        return;
-                    }
 
                     // 判断当前条目是否已有 MediaInfo。
                     var hasMediaInfo = MediaInfoService.HasMediaInfo(item);
@@ -537,13 +552,14 @@ namespace MediaInfoKeeper {
 
                         // 如果不存在Json文件，则使用ffprobe 提取一次
                         if (shouldRefreshAfterRestore) {
-                            if (!Options.MediaInfo.ExtractMediaInfoOnItemAdded)
+                            if (!extractMediaInfo)
                                 Logger.Info($"已关闭入库提取媒体信息，跳过提取 item={item.FileName ?? item.Path}");
                             else
                                 try {
                                     // 恢复失败时先触发媒体信息提取，再写入 JSON。
                                     var extracted = await MediaInfoRunner.ExtractMediaInfoAsync(itemId, "入库媒体信息",
-                                            CancellationToken.None)
+                                            cancellationToken: CancellationToken.None,
+                                            priority: RefreshPriority.Highest)
                                         .ConfigureAwait(false);
                                     if (!extracted) Logger.Info($"入库媒体信息: 提取失败 item={itemDisplayName}");
                                 }
@@ -563,8 +579,19 @@ namespace MediaInfoKeeper {
                             if (item is Audio) EmbeddedInfoStore.ApplyToItem(item);
                         }
                     }
+                    // 所有需要媒体信息的任务启动完成后，后台等待媒体信息队列清空，再刷新元数据。
+                    await MediaInfoRunner.WaitForItemFinishAsync(itemId, CancellationToken.None)
+                            .ConfigureAwait(false);
 
-                    // 收藏
+                    //释放入库信号量
+                    itemAddedSemaphore.Release();
+                    semaphoreHeld =  false;
+
+                    if (refreshMetadata) {
+                        await MetaDataRunner.RefreshMetaDataAsync(itemId, priority: RefreshPriority.Highest, allowFfProcess: true);
+                    }
+
+                    // 收藏通知和扫描收藏片头
                     if (item is Episode newEpisode && newEpisode.ExtraType == null) {
                         var series = LibraryService.GetSeries(newEpisode.SeriesId);
                         if (series == null) {
@@ -573,16 +600,14 @@ namespace MediaInfoKeeper {
                         else {
                             var users = LibraryService.GetFavoriteUsersBySeriesId(series.InternalId);
                             if (users.Count != 0) {
-                                // 有人收藏，开始执行扫描收藏媒体信息和片头，避免重复，判断未开启所有入库扫描
-                                var canScanIntro = Options.IntroSkip?.ScanIntroOnFavorite == true &&
-                                                   Options.IntroSkip?.ScanIntroOnItemAdded == false;
+                                // 有人收藏，开始执行扫描收藏媒体信息和片头，避免重复，判断未开启媒体库入库扫描
+                                var canScanIntro = pluginOptions?.IntroSkip?.ScanIntroOnFavorite == true && !scanIntro;
                                 if (canScanIntro)
                                     _ = IntroScanRunner.ScanEpisodeAsync(newEpisode, "收藏入库",
                                         priority: RefreshPriority.High);
 
                                 // 有人收藏，通知收藏入库
-                                Logger.Info(
-                                    $"收藏入库事件: 剧集={series.Name} {newEpisode.Name}, 收藏用户={string.Join(", ", users)}");
+                                Logger.Info($"收藏入库事件: 剧集={series.Name} {newEpisode.Name}, 收藏用户={string.Join(", ", users)}");
                                 var sentCount = NotificationApi.LibraryNewSendNotification(series, newEpisode, users);
                                 if (sentCount > 0) Logger.Info($"已发送入库通知: 剧集={series.Name} {newEpisode.Name}, 通知用户数={sentCount}");
                             }
@@ -593,16 +618,9 @@ namespace MediaInfoKeeper {
                     }
 
                     // 入库加入扫描片头队列
-                    if (Options.IntroSkip?.ScanIntroOnItemAdded == true && item is Episode episode)
+                    if (scanIntro && item is Episode episode)
                         _ = IntroScanRunner.ScanEpisodeAsync(episode, "入库片头扫描", priority: RefreshPriority.High);
 
-                    // 所有需要媒体信息的任务启动完成后，后台等待媒体信息队列清空，再刷新元数据。
-                    _ = Task.Run(async () => {
-                        await MediaInfoRunner.WaitForItemFinishAsync(itemId, CancellationToken.None)
-                            .ConfigureAwait(false);
-                        _ = MetaDataRunner.RefreshMetaDataAsync(itemId, priority: RefreshPriority.Highest,
-                            allowFfProcess: true);
-                    });
                 }
                 catch (Exception ex) {
                     // 记录异常，避免影响库事件流程。
@@ -660,8 +678,6 @@ namespace MediaInfoKeeper {
             if (!Options.MediaInfo.DeleteMediaInfoJsonOnRemove || !Options.MainPage.PlugginEnabled) return;
 
             if (!(e.Item is Video) && !(e.Item is Audio)) return;
-
-            if (!LibraryService.IsItemInCatchupLibraryScope(e.Item)) return;
 
             Logger.Info("同步删除 媒体信息 Json");
             MediaInfoDocument.DeleteMediaInfoJson(e.Item, new DirectoryService(Logger, fileSystem),

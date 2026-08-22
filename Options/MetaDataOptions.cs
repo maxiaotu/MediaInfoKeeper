@@ -8,6 +8,7 @@ using Emby.Web.GenericEdit.Elements;
 using Emby.Web.GenericEdit.Elements.List;
 using MediaBrowser.Model.Attributes;
 using MediaBrowser.Model.GenericEdit;
+using MediaInfoKeeper.Provider;
 
 namespace MediaInfoKeeper.Options {
     public class MetaDataOptions : EditableOptionsBase {
@@ -84,10 +85,10 @@ namespace MediaInfoKeeper.Options {
         public void Initialize() {
             EnsureScraperEditors();
             ScraperEntries = new GenericItemList(new[] {
-                CreateScraperEntry("IntroDB", "适用条目：集；刮削片头片尾标记。", "metadata.scraper.introDb"),
-                CreateScraperEntry("TheIntroDB", "适用条目：电影、集；刮削片头片尾标记。", "metadata.scraper.theIntroDb"),
-                CreateScraperEntry("Danmu", "适用条目：电影、集；刮削弹幕。", "metadata.scraper.danmu"),
-                CreateScraperEntry("DoubanRole", "适用条目：电影、剧集、集；使用豆瓣人物角色名。")
+                CreateScraperEntry(IntroDbProvider.ProviderName, "适用条目：集；刮削片头片尾标记。", "metadata.scraper.introDb"),
+                CreateScraperEntry(TheIntroDbProvider.ProviderName, "适用条目：电影、集；刮削片头片尾标记。", "metadata.scraper.theIntroDb"),
+                CreateScraperEntry(DanmuProvider.ProviderName, "适用条目：电影、集；刮削弹幕。", "metadata.scraper.danmu"),
+                CreateScraperEntry(DoubanRoleProvider.ProviderName, "适用条目：电影、剧集、集；使用豆瓣人物角色名。")
             });
 
             FallbackLanguageList.Clear();
@@ -152,7 +153,7 @@ namespace MediaInfoKeeper.Options {
                 nameof(BlockNonFallbackLanguage)
             );
 
-            AddGroup("刮削器", "配置插件的元数据 Provider 参数。是否启用及优先顺序请在媒体库的元数据刮削器中设置。",
+            AddGroup("刮削器", "配置插件的元数据 Provider 参数。是否启用及优先顺序请在媒体库的元数据 Provider 设置中调整。",
                 nameof(ScraperEntries));
 
             AddGroup("TMDB", "",

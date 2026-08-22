@@ -39,11 +39,12 @@ namespace MediaInfoKeeper.Web {
         }
 
         private static void PatchHtmlVideoPlayer(IServerConfigurationManager configurationManager) {
+            var pluginPath = string.Empty;
             try {
                 var dashboardSourcePath = configurationManager.Configuration.DashboardSourcePath ??
                                           Path.Combine(configurationManager.ApplicationPaths.ApplicationResourcesPath,
                                               "dashboard-ui");
-                var pluginPath = Path.Combine(dashboardSourcePath, "modules", "htmlvideoplayer", "plugin.js");
+                pluginPath = Path.Combine(dashboardSourcePath, "modules", "htmlvideoplayer", "plugin.js");
                 if (!File.Exists(pluginPath)) return;
 
                 const string source = "&&(elem.crossOrigin=initialSubtitleStream)";
@@ -59,9 +60,14 @@ namespace MediaInfoKeeper.Web {
                 Plugin.Instance.Logger.Debug("PatchHtmlVideoPlayer skipped: IO error: {0}", ex.Message);
                 Plugin.Instance.Logger.Debug(ex.StackTrace);
             }
+            catch (UnauthorizedAccessException ex) {
+                Plugin.Instance.Logger.Error(
+                    "PatchHtmlVideoPlayer failed：移除跨域限制失败，无权限修改 dashboard 文件 {0}，请检查 Emby 进程用户和目录挂载权限。", pluginPath);
+                Plugin.Instance.Logger.Error(ex.StackTrace);
+            }
             catch (Exception ex) {
                 Plugin.Instance.Logger.Warn("PatchHtmlVideoPlayer failed: {0}", ex.Message);
-                Plugin.Instance.Logger.Debug(ex.StackTrace);
+                Plugin.Instance.Logger.Error(ex.StackTrace);
             }
         }
 

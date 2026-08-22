@@ -112,27 +112,23 @@ namespace MediaInfoKeeper.Services {
             return adminOrderedViews;
         }
 
-        /// <summary>根据追更媒体库配置判断条目是否属于命中范围。</summary>
-        public bool IsItemInCatchupLibraryScope(BaseItem item) {
-            var raw = Plugin.Instance.Options.MainPage.CatchupLibraries;
-            var scopedLibraries = ParseScopedLibraryTokens(raw);
-            if (scopedLibraries.Count == 0) return true;
+        /// <summary>获取条目所属媒体库的名称和标识，用于一次性匹配多个运行范围。</summary>
+        public HashSet<string> GetItemLibraryScopeKeys(BaseItem item) {
+            var keys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            if (item == null) return keys;
 
-            foreach (var collectionFolder in libraryManager.GetCollectionFolders(item)) {
-                if (collectionFolder == null) continue;
+            if (item is CollectionFolder collectionFolder) AddCollectionFolderScopeKeys(collectionFolder, keys);
 
-                var name = collectionFolder.Name?.Trim();
-                if (!string.IsNullOrEmpty(name) &&
-                    scopedLibraries.Contains(name))
-                    return true;
+            foreach (var folder in libraryManager.GetCollectionFolders(item))
+                AddCollectionFolderScopeKeys(folder, keys);
 
-                if (scopedLibraries.Contains(collectionFolder.InternalId.ToString())) return true;
+            return keys;
+        }
 
-                var id = collectionFolder.Id.ToString();
-                if (scopedLibraries.Contains(id)) return true;
-            }
-
-            return false;
+        /// <summary>判断已解析的条目媒体库标识是否命中指定范围；范围留空时匹配全部。</summary>
+        public bool IsLibraryScopeMatch(IReadOnlyCollection<string> libraryScopeKeys, string scopedLibraries) {
+            var tokens = ParseScopedLibraryTokens(scopedLibraries);
+            return tokens.Count == 0 || libraryScopeKeys?.Any(tokens.Contains) == true;
         }
 
         /// <summary>根据配置生成媒体库路径列表。</summary>
@@ -591,6 +587,14 @@ namespace MediaInfoKeeper.Services {
                 .Where(value => !string.IsNullOrEmpty(value));
 
             return new HashSet<string>(tokens, StringComparer.OrdinalIgnoreCase);
+        }
+
+        private static void AddCollectionFolderScopeKeys(Folder folder, ISet<string> keys) {
+            if (folder == null || keys == null) return;
+            var name = folder.Name?.Trim();
+            if (!string.IsNullOrEmpty(name)) keys.Add(name);
+            if (folder.InternalId > 0) keys.Add(folder.InternalId.ToString());
+            keys.Add(folder.Id.ToString());
         }
 
         private static List<string> NormalizeLibraryPaths(IEnumerable<string> paths) {
