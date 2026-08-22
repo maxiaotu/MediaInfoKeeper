@@ -465,19 +465,22 @@ define(['connectionManager', 'globalize', 'loading', 'toast', 'confirm'], functi
             sources.forEach(function (source, index) {
                 var name = source.Name || ('版本 ' + (index + 1));
                 var path = source.Path || '';
+                try {
+                    if (path.indexOf('%') >= 0) path = decodeURIComponent(path);
+                } catch (decodeErr) { /* keep original path */ }
                 var folder = path.replace(/[\\/][^\\/]+$/, '');
                 html += '<label style="display:block;padding:10px 0;border-bottom:1px solid #333;cursor:pointer">' +
                     '<input type="radio" name="subhdMediaSource" value="' + escapeHtml(source.Id) + '"' +
                     (index === 0 ? ' checked' : '') + ' style="margin-right:8px">' +
                     '<span style="font-weight:bold">' + escapeHtml(name) + '</span>' +
-                    (folder ? '<br><span style="font-size:12px;color:#888;margin-left:22px">' + escapeHtml(folder) + '</span>' : '') +
+                    (folder ? '<br><span style="font-size:12px;color:#888;margin-left:22px;word-break:break-all">' + escapeHtml(folder) + '</span>' : '') +
                     '</label>';
             });
 
             html += '</div>' +
                 '<div style="display:flex;justify-content:flex-end;gap:10px;padding-top:14px">' +
-                '<button type="button" id="mediaSourcePickCancel" class="emby-button">取消</button>' +
-                '<button type="button" id="mediaSourcePickOk" class="emby-button raised">确定</button>' +
+                '<button type="button" id="mediaSourcePickCancel" class="emby-button emby-button-cancel" style="padding:10px 20px;background:#333;color:#fff;border:none;border-radius:4px;cursor:pointer">取消</button>' +
+                '<button type="button" id="mediaSourcePickOk" class="emby-button raised" style="padding:10px 20px;background:#52B54B;color:#fff;border:none;border-radius:4px;cursor:pointer">确定</button>' +
                 '</div></div></div>';
 
             var dlg = dialogHelper.createDialog({ size: 'small', removeOnClose: true });
