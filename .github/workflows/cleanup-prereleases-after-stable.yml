@@ -33,9 +33,10 @@ jobs:
         with:
           script: |
             const { owner, repo } = context.repo;
-            const betaTagPattern = /^v\d+\.\d+\.\d+\.\d+-beta\.\d+$/i;
-            const stableTagPattern = /^v(\d+)\.(\d+)\.(\d+)\.(\d+)$/i;
-            const prereleaseTagPattern = /^v(\d+)\.(\d+)\.(\d+)\.(\d+)-beta\.\d+$/i;
+            const forkSuffix = "-Maxiaotu";
+            const betaTagPattern = new RegExp(`^v\\d+\\.\\d+\\.\\d+\\.\\d+${forkSuffix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}-beta\\.\\d+$`, "i");
+            const stableTagPattern = new RegExp(`^v(\\d+)\\.(\\d+)\\.(\\d+)\\.(\\d+)${forkSuffix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "i");
+            const prereleaseTagPattern = new RegExp(`^v(\\d+)\\.(\\d+)\\.(\\d+)\\.(\\d+)${forkSuffix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}-beta\\.\\d+$`, "i");
 
             const parseVersionParts = (tagName, pattern) => {
               const match = typeof tagName === "string" ? tagName.match(pattern) : null;

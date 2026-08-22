@@ -33,6 +33,9 @@ on:
 permissions:
   contents: write
 
+env:
+  FORK_VERSION_SUFFIX: "-Maxiaotu"
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -120,7 +123,7 @@ jobs:
 
           next_beta_version="$(increment_version "$app_version")"
 
-          latest_beta_suffix="$(git tag -l "v${next_beta_version}-beta.*" | sed -E 's/.*-beta\.([0-9]+)$/\1/' | sort -n | tail -n 1)"
+          latest_beta_suffix="$(git tag -l "v${next_beta_version}${FORK_VERSION_SUFFIX}-beta.*" | sed -E 's/.*-beta\.([0-9]+)$/\1/' | sort -n | tail -n 1)"
           if [[ -z "$latest_beta_suffix" ]]; then
             next_beta_suffix="1"
           else
@@ -150,7 +153,7 @@ jobs:
                 if [[ -z "$input_version" ]]; then
                   beta_suffix="${{ steps.beta_version.outputs.next_beta_suffix }}"
                 else
-                  latest_manual_suffix="$(git tag -l "v${base_tag}-beta.*" | sed -E 's/.*-beta\.([0-9]+)$/\1/' | sort -n | tail -n 1)"
+                  latest_manual_suffix="$(git tag -l "v${base_tag}${FORK_VERSION_SUFFIX}-beta.*" | sed -E 's/.*-beta\.([0-9]+)$/\1/' | sort -n | tail -n 1)"
                   if [[ -z "$latest_manual_suffix" ]]; then
                     beta_suffix="1"
                   else
@@ -164,9 +167,9 @@ jobs:
               pre_release="true"
               release_mode="manual_beta"
               release_channel="Beta"
-              release_tag="v${base_tag}-beta.${beta_suffix}"
-              release_name="MediaInfoKeeper v${base_tag}-beta.${beta_suffix}"
-              package_version="${base_tag}-beta.${beta_suffix}"
+              release_tag="v${base_tag}${FORK_VERSION_SUFFIX}-beta.${beta_suffix}"
+              release_name="MediaInfoKeeper v${base_tag}${FORK_VERSION_SUFFIX}-beta.${beta_suffix}"
+              package_version="${base_tag}${FORK_VERSION_SUFFIX}-beta.${beta_suffix}"
               assembly_version="$base_tag"
               file_version="$base_tag"
             else
@@ -175,7 +178,7 @@ jobs:
               release_channel="Stable"
               release_tag=""
               release_name=""
-              package_version="${app_version}"
+              package_version="${app_version}${FORK_VERSION_SUFFIX}"
               assembly_version="${app_version}"
               file_version="${app_version}"
             fi
@@ -186,9 +189,9 @@ jobs:
               pre_release="false"
               release_mode="push_stable"
               release_channel="Stable"
-              release_tag="v${app_version}"
-              release_name="MediaInfoKeeper v${app_version}"
-              package_version="${app_version}"
+              release_tag="v${app_version}${FORK_VERSION_SUFFIX}"
+              release_name="MediaInfoKeeper v${app_version}${FORK_VERSION_SUFFIX}"
+              package_version="${app_version}${FORK_VERSION_SUFFIX}"
               assembly_version="${app_version}"
               file_version="${app_version}"
             else
@@ -197,9 +200,9 @@ jobs:
               pre_release="true"
               release_mode="push_beta"
               release_channel="Beta"
-              release_tag="v${base_tag}-beta.${beta_suffix}"
-              release_name="MediaInfoKeeper v${base_tag}-beta.${beta_suffix}"
-              package_version="${base_tag}-beta.${beta_suffix}"
+              release_tag="v${base_tag}${FORK_VERSION_SUFFIX}-beta.${beta_suffix}"
+              release_name="MediaInfoKeeper v${base_tag}${FORK_VERSION_SUFFIX}-beta.${beta_suffix}"
+              package_version="${base_tag}${FORK_VERSION_SUFFIX}-beta.${beta_suffix}"
               assembly_version="${base_tag}"
               file_version="${base_tag}"
             fi
@@ -299,7 +302,7 @@ jobs:
 
           if [[ "$release_channel" == "Stable" ]]; then
             # Stable: list commits since the latest stable tag.
-            boundary_tag="$(git tag --merged HEAD --list | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n 1 || true)"
+            boundary_tag="$(git tag --merged HEAD --list | grep -E "^v[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+${FORK_VERSION_SUFFIX//./\\.}$" | sort -V | tail -n 1 || true)"
             changes_title="Changes since previous stable tag"
           else
             # Beta: list commits since the previous tag (stable or beta).
