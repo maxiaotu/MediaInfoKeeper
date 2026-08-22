@@ -240,6 +240,17 @@ namespace MediaInfoKeeper.Options {
             [EditMultilSelect]
             [SelectItemsSource(nameof(LibraryList))]
             public string ItemAddedIntroScanLibraries { get; set; } = string.Empty;
+
+            [DisplayName("入库自动搜简体字幕")]
+            [Description("默认关闭。开启后，新入库电影/剧集在媒体信息就绪后，若无中字外挂且无内封中字，则自动搜索并下载简体字幕。请只勾选外语库，华语库不要开。")]
+            public bool ItemAddedSubhdDownloadEnabled { get; set; } = false;
+
+            [VisibleCondition(nameof(ItemAddedSubhdDownloadEnabled), SimpleCondition.IsTrue)]
+            [DisplayName("自动搜字幕媒体库")]
+            [Description("留空表示全部媒体库；建议只勾选外语电影、海外剧。")]
+            [EditMultilSelect]
+            [SelectItemsSource(nameof(LibraryList))]
+            public string ItemAddedSubhdDownloadLibraries { get; set; } = string.Empty;
         }
 
         public class RefreshRecentMetadataTaskEditorOptions : EditableOptionsBase {

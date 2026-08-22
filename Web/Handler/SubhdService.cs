@@ -525,6 +525,8 @@ namespace MediaInfoKeeper.Web.Handler {
                    ext == ".ttml" || ext == ".dfxp" || ext == ".smi" || ext == ".sami";
         }
 
+        internal static bool IsSubtitleExtension(string ext) => IsSubtitleExt(ext);
+
         private static string DetectLanguageSuffix(string filename) {
             var name = (filename ?? "").ToLowerInvariant();
 

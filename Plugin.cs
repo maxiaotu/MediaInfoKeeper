@@ -67,6 +67,7 @@ namespace MediaInfoKeeper {
         public static StrmFileWatcher StrmFileWatcher { get; private set; }
         public static ExternalFiles ExternalFiles { get; private set; }
         public static DanmuService DanmuService { get; private set; }
+        public static ItemAddedSubhdService ItemAddedSubhdService { get; private set; }
         internal static ReleaseInfoService ReleaseInfoService { get; private set; }
 
         private readonly Guid id = new("874D7056-072D-43A4-16DD-BC32665B9563");
@@ -187,6 +188,7 @@ namespace MediaInfoKeeper {
             MediaSourceInfoStore = new MediaSourceInfoStore(libraryManager, itemRepository, fileSystem, jsonSerializer);
             EmbeddedInfoStore = new EmbeddedInfoStore(jsonSerializer);
             DanmuService = new DanmuService(logManager, httpClient);
+            ItemAddedSubhdService = new ItemAddedSubhdService(libraryManager, Logger);
 
             NotificationApi = new NotificationApi(notificationManager, userManager, sessionManager);
             IntroSkipChapterApi = new IntroSkipChapterApi(libraryManager, itemRepository, Logger);
@@ -414,6 +416,8 @@ namespace MediaInfoKeeper {
                 NormalizeScopedLibraries(itemAddedTaskEditor.ItemAddedRefreshMetadataLibraries);
             itemAddedTaskEditor.ItemAddedIntroScanLibraries =
                 NormalizeScopedLibraries(itemAddedTaskEditor.ItemAddedIntroScanLibraries);
+            itemAddedTaskEditor.ItemAddedSubhdDownloadLibraries =
+                NormalizeScopedLibraries(itemAddedTaskEditor.ItemAddedSubhdDownloadLibraries);
 
             var scheduledTasksEditor = options.MainPage.ScheduledTasksEditor;
             if (scheduledTasksEditor != null) {
@@ -620,6 +624,12 @@ namespace MediaInfoKeeper {
                     // 入库加入扫描片头队列
                     if (scanIntro && item is Episode episode)
                         _ = IntroScanRunner.ScanEpisodeAsync(episode, "入库片头扫描", priority: RefreshPriority.High);
+
+                    if (item is Video &&
+                        itemAddedOptions?.ItemAddedSubhdDownloadEnabled == true) {
+                        var subhdOptions = itemAddedOptions;
+                        _ = ItemAddedSubhdService.TryDownloadAsync(itemId, subhdOptions);
+                    }
 
                 }
                 catch (Exception ex) {
