@@ -542,10 +542,11 @@ namespace MediaInfoKeeper.Web.Handler {
                 return ".zh-Hant";
             }
             if (name.Contains("chs") || name.Contains("简体") || name.Contains("简中") ||
-                name.Contains("中字") || name.Contains("chi")) {
+                name.Contains("中字") || Regex.IsMatch(name, @"(?:^|[\s._\-\[\(])chi(?:$|[\s._\-\]\),])")) {
                 return ".zh";
             }
-            if (name.Contains("eng") || name.Contains("english") || name.Contains("英文")) {
+            if (name.Contains("eng") || name.Contains("english") || name.Contains("英文") ||
+                Regex.IsMatch(name, @"(?:^|[\s._\-\[\(])en(?:$|[\s._\-\]\),])")) {
                 return ".en";
             }
             return "";

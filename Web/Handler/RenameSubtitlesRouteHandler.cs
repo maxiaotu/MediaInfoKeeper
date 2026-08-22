@@ -3,12 +3,17 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text.RegularExpressions;
+using System.Threading;
 using MediaBrowser.Controller.Entities;
 
 namespace MediaInfoKeeper.Web.Handler {
     internal sealed class RenameSubtitlesRouteHandler {
         private static readonly HashSet<string> SubtitleExtensions = new(StringComparer.OrdinalIgnoreCase) {
-            ".ass", ".ssa", ".srt", ".sup", ".vtt", ".sub", ".smi", ".pgs", ".ttml", ".dfxp"
+            ".ass", ".ssa", ".srt", ".sup", ".vtt", ".sub", ".smi", ".pgs", ".ttml", ".dfxp", ".idx"
+        };
+
+        private static readonly HashSet<string> VideoExtensions = new(StringComparer.OrdinalIgnoreCase) {
+            ".strm", ".mkv", ".mp4", ".avi", ".mov", ".ts", ".m2ts", ".wmv", ".flv", ".webm", ".iso"
         };
 
         private static readonly Regex SeasonEpisodePattern =
@@ -20,35 +25,14 @@ namespace MediaInfoKeeper.Web.Handler {
         private static readonly Regex AltSeasonEpisodePattern =
             new(@"(\d{1,2})x(\d{1,4})", RegexOptions.Compiled);
 
+        private static readonly Regex ChineseSeasonEpisodePattern =
+            new(@"第\s*(\d{1,4})\s*季\s*第\s*(\d{1,4})\s*集", RegexOptions.Compiled);
+
         private static readonly Regex ChineseEpisodePattern =
             new(@"第\s*(\d{1,4})\s*集", RegexOptions.Compiled);
 
         private static readonly Regex StandaloneNumberPattern =
             new(@"(?:^|[\s._-])(0?[1-9]\d?)(?:[\s._-]|$)", RegexOptions.Compiled);
-        private static readonly Regex ZhHansLanguagePattern =
-            new(@"[\[\(\._-](chs|chi|zh[-_ ]?cn|chinese[-_ ]?simplified)[\]\)\._-]|简中|简体|中文|chs|chi|zh[-_ ]?cn|简英|中英",
-                RegexOptions.Compiled | RegexOptions.IgnoreCase);
-        private static readonly Regex ZhHantLanguagePattern =
-            new(@"[\[\(\._-](cht|zh[-_ ]?tw|chinese[-_ ]?traditional)[\]\)\._-]|繁中|繁体|cht|zh[-_ ]?tw|粤语|广东话",
-                RegexOptions.Compiled | RegexOptions.IgnoreCase);
-        private static readonly Regex JpnLanguagePattern =
-            new(@"[\[\(\._-](jpn|ja|jp|japanese)[\]\)\._-]|日语|日文|日字",
-                RegexOptions.Compiled | RegexOptions.IgnoreCase);
-        private static readonly Regex KorLanguagePattern =
-            new(@"[\[\(\._-](kor|ko|kr|korean)[\]\)\._-]|韩语|韩文|韩字",
-                RegexOptions.Compiled | RegexOptions.IgnoreCase);
-        private static readonly Regex EngLanguagePattern =
-            new(@"[\[\(\._-](eng|en|english)[\]\)\._-]|英语|英文|英字",
-                RegexOptions.Compiled | RegexOptions.IgnoreCase);
-        private static readonly Regex FreLanguagePattern =
-            new(@"[\[\(\._-](fre|fr|french|fra)[\]\)\._-]|法语|法文|法字",
-                RegexOptions.Compiled | RegexOptions.IgnoreCase);
-        private static readonly Regex SpaLanguagePattern =
-            new(@"[\[\(\._-](spa|es|spanish)[\]\)\._-]|西班牙语|西语",
-                RegexOptions.Compiled | RegexOptions.IgnoreCase);
-        private static readonly Regex GerLanguagePattern =
-            new(@"[\[\(\._-](ger|de|german|deu)[\]\)\._-]|德语|德文|德字",
-                RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
         private readonly Func<IEnumerable<string>, List<BaseItem>> _expandToTargetItems;
 
@@ -77,32 +61,66 @@ namespace MediaInfoKeeper.Web.Handler {
             }
 
             var processedDirs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var renamedItems = new List<BaseItem>();
             var totalRenamed = 0;
+
             foreach (var item in targetItems) {
                 response.Processed++;
                 try {
-                    var folder = Path.GetDirectoryName(item.Path);
-                    if (string.IsNullOrWhiteSpace(folder) || processedDirs.Contains(folder)) continue;
+                    var folder = item.ContainingFolderPath ?? Path.GetDirectoryName(item.Path);
+                    if (string.IsNullOrWhiteSpace(folder) || !processedDirs.Add(folder)) continue;
 
                     var result = RenameMismatchedSubtitles(folder);
                     totalRenamed += result.Renamed;
                     response.Succeeded += result.Renamed;
                     response.Failed += result.Failed;
-                    processedDirs.Add(folder);
+                    if (result.Renamed > 0) renamedItems.Add(item);
                 }
                 catch (Exception ex) {
                     response.Failed++;
-                    logger?.Error(string.Format("字幕重命名失败: {0} - {1}", item.Path ?? item.Name, ex.Message));
+                    logger?.Error($"字幕重命名失败: {item.Path ?? item.Name} - {ex.Message}");
                 }
             }
 
-            response.Message = totalRenamed > 0
-                ? string.Format("已重命名 {0} 个字幕文件", totalRenamed)
-                : "未发现需要重命名的字幕文件";
-            logger?.Info(string.Format(
-                "RenameSubtitles result: total={0}, processed={1}, succeeded={2}, failed={3}, message={4}",
-                response.Total, response.Processed, response.Succeeded, response.Failed, response.Message));
+            if (totalRenamed > 0) {
+                var scanned = ForceRefreshExternalFiles(renamedItems.Count > 0 ? renamedItems : targetItems);
+                response.Message = scanned > 0
+                    ? $"已重命名 {totalRenamed} 个字幕文件 · 已刷新外挂"
+                    : $"已重命名 {totalRenamed} 个字幕文件 · 外挂未刷新";
+            }
+            else {
+                response.Message = "未发现需要重命名的字幕文件";
+            }
+
+            logger?.Info(
+                $"RenameSubtitles result: total={response.Total}, processed={response.Processed}, succeeded={response.Succeeded}, failed={response.Failed}, message={response.Message}");
             return response;
+        }
+
+        private static int ForceRefreshExternalFiles(IEnumerable<BaseItem> items) {
+            if (Plugin.ExternalFiles == null || !Plugin.ExternalFiles.IsAvailable) return 0;
+
+            var refreshOptions = Plugin.ExternalFiles.GetRefreshOptions();
+            var seen = new HashSet<long>();
+            var succeeded = 0;
+
+            foreach (var item in items ?? Enumerable.Empty<BaseItem>()) {
+                if (item == null || !seen.Add(item.InternalId)) continue;
+
+                try {
+                    Plugin.ExternalFiles
+                        .UpdateExternalFiles(item, refreshOptions, true, CancellationToken.None)
+                        .GetAwaiter()
+                        .GetResult();
+                    succeeded++;
+                }
+                catch (Exception ex) {
+                    Plugin.Instance.Logger?.Error($"重命名后刷新外挂失败: {item.Path ?? item.Name}");
+                    Plugin.Instance.Logger?.Error(ex.Message);
+                }
+            }
+
+            return succeeded;
         }
 
         private static RenameSummary RenameMismatchedSubtitles(string folder) {
@@ -115,44 +133,40 @@ namespace MediaInfoKeeper.Web.Handler {
 
             var renamed = 0;
             var failed = 0;
-            var files = Directory.GetFiles(folder);
-            foreach (var file in files) {
+
+            foreach (var file in Directory.GetFiles(folder)) {
                 var ext = Path.GetExtension(file);
                 if (!SubtitleExtensions.Contains(ext)) continue;
 
                 var fileName = Path.GetFileName(file);
-
-                var alreadyMatched = false;
-                foreach (var vn in videoNames) {
-                    if (fileName.StartsWith(vn, StringComparison.OrdinalIgnoreCase)) {
-                        alreadyMatched = true;
-                        break;
-                    }
-                }
-                if (alreadyMatched) continue;
+                if (IsAlreadyMatchedToVideo(fileName, videoNames)) continue;
 
                 var targetVideoName = FindMatchingVideo(fileName, videoMap);
                 if (targetVideoName == null) {
-                    logger?.Warn(string.Format("无法匹配字幕到任何视频，跳过: {0}", fileName));
+                    logger?.Warn($"无法匹配字幕到任何视频，跳过: {fileName}");
                     continue;
                 }
 
-                var lang = DetectLanguage(fileName);
-                var newName = string.Format("{0}.{1}{2}", targetVideoName, lang, ext);
+                var lang = DetectLanguageTag(fileName);
+                var newName = string.IsNullOrEmpty(lang)
+                    ? targetVideoName + ext
+                    : $"{targetVideoName}.{lang}{ext}";
                 var newPath = Path.Combine(folder, newName);
 
+                if (string.Equals(file, newPath, StringComparison.OrdinalIgnoreCase)) continue;
+
                 if (File.Exists(newPath)) {
-                    logger?.Warn(string.Format("目标文件已存在，跳过: {0} -> {1}", fileName, newName));
+                    logger?.Warn($"目标文件已存在，跳过: {fileName} -> {newName}");
                     continue;
                 }
 
                 try {
                     File.Move(file, newPath);
-                    logger?.Info(string.Format("字幕已重命名: {0} -> {1}", fileName, newName));
+                    logger?.Info($"字幕已重命名: {fileName} -> {newName}");
                     renamed++;
                 }
                 catch (Exception ex) {
-                    logger?.Error(string.Format("重命名失败: {0} -> {1}: {2}", fileName, newName, ex.Message));
+                    logger?.Error($"重命名失败: {fileName} -> {newName}: {ex.Message}");
                     failed++;
                 }
             }
@@ -160,15 +174,23 @@ namespace MediaInfoKeeper.Web.Handler {
             return new RenameSummary(renamed, failed);
         }
 
+        private static bool IsAlreadyMatchedToVideo(string fileName, HashSet<string> videoNames) {
+            foreach (var videoName in videoNames) {
+                if (fileName.Length < videoName.Length) continue;
+                if (!fileName.StartsWith(videoName, StringComparison.OrdinalIgnoreCase)) continue;
+                if (fileName.Length == videoName.Length) return true;
+                if (fileName[videoName.Length] == '.') return true;
+            }
+
+            return false;
+        }
+
         private static Dictionary<string, string> BuildVideoSeasonEpisodeMap(string folder) {
             var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-            var videoExts = new HashSet<string>(StringComparer.OrdinalIgnoreCase) {
-                ".strm", ".mkv", ".mp4", ".avi", ".mov", ".ts", ".m2ts", ".wmv", ".flv", ".webm", ".iso"
-            };
 
             foreach (var file in Directory.GetFiles(folder)) {
                 var ext = Path.GetExtension(file);
-                if (!videoExts.Contains(ext)) continue;
+                if (!VideoExtensions.Contains(ext)) continue;
 
                 var name = Path.GetFileNameWithoutExtension(file);
                 if (string.IsNullOrWhiteSpace(name)) continue;
@@ -177,9 +199,9 @@ namespace MediaInfoKeeper.Web.Handler {
                 if (seMatch.Success) {
                     var s = int.Parse(seMatch.Groups[1].Value);
                     var e = int.Parse(seMatch.Groups[2].Value);
-                    var key = string.Format("S{0:D2}E{1:D2}", s, e);
-                    map[key] = name;
-                } else {
+                    map[$"S{s:D2}E{e:D2}"] = name;
+                }
+                else {
                     map[name] = name;
                 }
             }
@@ -187,8 +209,7 @@ namespace MediaInfoKeeper.Web.Handler {
             return map;
         }
 
-        private static string FindMatchingVideo(string subtitleFileName,
-            Dictionary<string, string> videoMap) {
+        private static string FindMatchingVideo(string subtitleFileName, Dictionary<string, string> videoMap) {
             if (videoMap.Count == 0) return null;
 
             var name = Path.GetFileNameWithoutExtension(subtitleFileName);
@@ -196,95 +217,109 @@ namespace MediaInfoKeeper.Web.Handler {
 
             var seMatch = SeasonEpisodePattern.Match(name);
             if (seMatch.Success) {
-                var s = int.Parse(seMatch.Groups[1].Value);
-                var e = int.Parse(seMatch.Groups[2].Value);
-                var key = string.Format("S{0:D2}E{1:D2}", s, e);
+                var key = $"S{int.Parse(seMatch.Groups[1].Value):D2}E{int.Parse(seMatch.Groups[2].Value):D2}";
                 if (videoMap.TryGetValue(key, out var vn)) return vn;
             }
 
             var altMatch = AltSeasonEpisodePattern.Match(name);
             if (altMatch.Success) {
-                var s = int.Parse(altMatch.Groups[1].Value);
-                var e = int.Parse(altMatch.Groups[2].Value);
-                var key = string.Format("S{0:D2}E{1:D2}", s, e);
+                var key = $"S{int.Parse(altMatch.Groups[1].Value):D2}E{int.Parse(altMatch.Groups[2].Value):D2}";
                 if (videoMap.TryGetValue(key, out var vn)) return vn;
             }
 
-            var epMatch = EpisodeOnlyPattern.Match(name);
-            if (epMatch.Success) {
-                var ep = int.Parse(epMatch.Groups[1].Value);
-                var matches = videoMap
-                    .Where(kvp => {
-                        var epInKey = EpisodeOnlyPattern.Match(kvp.Key);
-                        return epInKey.Success && int.Parse(epInKey.Groups[1].Value) == ep;
-                    })
-                    .Select(kvp => kvp.Value)
-                    .Distinct(StringComparer.OrdinalIgnoreCase)
-                    .ToList();
-                if (matches.Count == 1) return matches[0];
+            var cnSeMatch = ChineseSeasonEpisodePattern.Match(name);
+            if (cnSeMatch.Success) {
+                var key = $"S{int.Parse(cnSeMatch.Groups[1].Value):D2}E{int.Parse(cnSeMatch.Groups[2].Value):D2}";
+                if (videoMap.TryGetValue(key, out var vn)) return vn;
             }
 
+            var episodeCandidates = new List<int>();
+            var epMatch = EpisodeOnlyPattern.Match(name);
+            if (epMatch.Success) episodeCandidates.Add(int.Parse(epMatch.Groups[1].Value));
+
             var chMatch = ChineseEpisodePattern.Match(name);
-            if (chMatch.Success) {
-                var ep = int.Parse(chMatch.Groups[1].Value);
-                var matches = videoMap
-                    .Where(kvp => {
-                        var epInKey = EpisodeOnlyPattern.Match(kvp.Key);
-                        return epInKey.Success && int.Parse(epInKey.Groups[1].Value) == ep;
-                    })
-                    .Select(kvp => kvp.Value)
-                    .Distinct(StringComparer.OrdinalIgnoreCase)
-                    .ToList();
-                if (matches.Count == 1) return matches[0];
-            }
+            if (chMatch.Success) episodeCandidates.Add(int.Parse(chMatch.Groups[1].Value));
 
             var numMatch = StandaloneNumberPattern.Match(name);
             if (numMatch.Success) {
                 var num = int.Parse(numMatch.Groups[1].Value);
-                if (num <= 99) {
-                    var matches = videoMap
-                        .Where(kvp => {
-                            var epInKey = EpisodeOnlyPattern.Match(kvp.Key);
-                            return epInKey.Success && int.Parse(epInKey.Groups[1].Value) == num;
-                        })
-                        .Select(kvp => kvp.Value)
-                        .Distinct(StringComparer.OrdinalIgnoreCase)
-                        .ToList();
-                    if (matches.Count == 1) return matches[0];
-                }
+                if (num <= 99) episodeCandidates.Add(num);
+            }
+
+            foreach (var episode in episodeCandidates.Distinct()) {
+                var matches = FindVideosByEpisode(videoMap, episode);
+                if (matches.Count == 1) return matches[0];
             }
 
             var standalone = videoMap
                 .Where(kvp => !SeasonEpisodePattern.IsMatch(kvp.Key))
+                .Select(kvp => kvp.Value)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToList();
-            if (standalone.Count == 1) return standalone[0].Value;
+            if (standalone.Count == 1) return standalone[0];
 
             return null;
         }
 
-        private static string DetectLanguage(string fileName) {
-            if (string.IsNullOrWhiteSpace(fileName)) return "chi";
+        private static List<string> FindVideosByEpisode(Dictionary<string, string> videoMap, int episode) {
+            return videoMap
+                .Where(kvp => {
+                    var se = SeasonEpisodePattern.Match(kvp.Key);
+                    if (se.Success) return int.Parse(se.Groups[2].Value) == episode;
 
-            var lower = fileName.ToLowerInvariant();
+                    var ep = EpisodeOnlyPattern.Match(kvp.Key);
+                    return ep.Success && int.Parse(ep.Groups[1].Value) == episode;
+                })
+                .Select(kvp => kvp.Value)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+        }
 
-            if (ZhHansLanguagePattern.IsMatch(lower))
-                return "chi";
-            if (ZhHantLanguagePattern.IsMatch(lower))
-                return "chi";
-            if (JpnLanguagePattern.IsMatch(lower))
-                return "jpn";
-            if (KorLanguagePattern.IsMatch(lower))
-                return "kor";
-            if (EngLanguagePattern.IsMatch(lower))
-                return "eng";
-            if (FreLanguagePattern.IsMatch(lower))
-                return "fre";
-            if (SpaLanguagePattern.IsMatch(lower))
-                return "spa";
-            if (GerLanguagePattern.IsMatch(lower))
-                return "ger";
+        private static string DetectLanguageTag(string fileName) {
+            if (string.IsNullOrWhiteSpace(fileName)) return "zh";
 
-            return "chi";
+            var name = fileName.ToLowerInvariant();
+
+            if (ContainsAny(name, "chs&en", "gb&en", "简英", "中英", "双语", "简繁", "中英双字", "简英双语"))
+                return "zh&en";
+            if (ContainsAny(name, "cht&en", "繁英", "繁英双语", "big5&en"))
+                return "zh-Hant&en";
+            if (ContainsAny(name, "cht", "繁体", "繁中", "big5", "zh-hant", "zh_hant", "粤语", "广东话"))
+                return "zh-Hant";
+            if (ContainsAny(name, "chs", "简体", "简中", "中字", "中文", "zh-cn", "zh_cn", "zh-hans") ||
+                HasToken(name, "chi"))
+                return "zh";
+            if (ContainsAny(name, "jpn", "japanese", "日语", "日文", "日字") || HasToken(name, "ja", "jp"))
+                return "ja";
+            if (ContainsAny(name, "kor", "korean", "韩语", "韩文", "韩字") || HasToken(name, "ko", "kr"))
+                return "ko";
+            if (ContainsAny(name, "eng", "english", "英语", "英文", "英字") || HasToken(name, "en"))
+                return "en";
+            if (ContainsAny(name, "fre", "french", "fra", "法语", "法文", "法字") || HasToken(name, "fr"))
+                return "fr";
+            if (ContainsAny(name, "spa", "spanish", "西班牙语", "西语") || HasToken(name, "es"))
+                return "es";
+            if (ContainsAny(name, "ger", "german", "deu", "德语", "德文", "德字") || HasToken(name, "de"))
+                return "de";
+
+            return "zh";
+        }
+
+        private static bool ContainsAny(string text, params string[] values) {
+            foreach (var value in values) {
+                if (text.IndexOf(value, StringComparison.OrdinalIgnoreCase) >= 0) return true;
+            }
+
+            return false;
+        }
+
+        private static bool HasToken(string text, params string[] tokens) {
+            foreach (var token in tokens) {
+                var pattern = $@"(?:^|[\s._\-\[\(]){Regex.Escape(token)}(?:$|[\s._\-\]\),])";
+                if (Regex.IsMatch(text, pattern, RegexOptions.IgnoreCase)) return true;
+            }
+
+            return false;
         }
 
         private readonly record struct RenameSummary(int Renamed, int Failed);
